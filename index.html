@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Crypto Chat</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js" defer></script>
+    <script src="app.js" defer></script>
+</head>
+<body>
+
+<div id="login-screen">
+    <h2>Chat</h2>
+    <input type="text" id="userName" placeholder="Ваше имя">
+    <input type="password" id="seedPhrase" placeholder="Ключ из блоков переданных по флешке">
+    <button onclick="enterChat()">Войти в чат</button>
+</div>
+
+<div id="chat-screen">
+    <div class="header">
+        <span id="display-name"></span>
+        <button onclick="loadMessages()" class="small-btn">Reload</button>
+    </div>
+    <div id="messages"></div>
+    <div class="input-area">
+        <input type="text" id="msgInput" placeholder="Message..." autocomplete="off">
+        <button class="send-btn" onclick="sendMessage()">➤</button>
+    </div>
+</div>
+
+</body>
+</html>
