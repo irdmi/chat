@@ -9,11 +9,14 @@
 </head>
 <body>
   <div class="container">
-    <!-- Header with buttons -->
+    <!-- Header -->
     <header class="header">
-      <button id="menu-btn" class="icon-btn" title="Chats">☰</button>
+      <button id="menu-btn" class="icon-btn">☰</button>
       <h1 id="display-name">Chat</h1>
-      <button id="pwd-btn" class="icon-btn" title="Generate Password">🔑</button>
+      <div class="header-buttons">
+        <button id="pwd-btn" class="icon-btn small-btn" title="Generate Password">🔑</button>
+        <button id="reload-btn" class="icon-btn small-btn" title="Reload">↻</button>
+      </div>
     </header>
 
     <!-- Login Screen -->
@@ -33,7 +36,7 @@
       </div>
     </div>
 
-    <!-- Sidebar (Chat List) -->
+    <!-- Sidebar -->
     <div id="sidebar" class="sidebar">
       <div class="sidebar-header">
         <h3>Chats</h3>
@@ -75,7 +78,7 @@
       </div>
     </div>
 
-    <!-- Overlay for sidebar -->
+    <!-- Overlay -->
     <div id="overlay" class="overlay"></div>
   </div>
 
