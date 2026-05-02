@@ -5,18 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Secure Chat</title>
   <link rel="stylesheet" href="styles.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js" defer></script>
 </head>
 <body>
   <div class="container">
-    <!-- Header -->
     <header class="header">
       <button id="menu-btn" class="icon-btn">☰</button>
       <h1 id="display-name">Chat</h1>
       <button id="reload-btn" class="icon-btn small-btn">↻</button>
     </header>
 
-    <!-- Login Screen -->
     <div id="login-screen">
       <h2>Join Chat</h2>
       <input type="text" id="userName" placeholder="Your name">
@@ -25,7 +23,6 @@
       <button onclick="createNewChat()" class="secondary-btn">+ New Chat</button>
     </div>
 
-    <!-- Chat Screen -->
     <div id="chat-screen" style="display: none;">
       <div id="messages"></div>
       <div class="input-area">
@@ -34,7 +31,6 @@
       </div>
     </div>
 
-    <!-- Sidebar -->
     <div id="sidebar" class="sidebar">
       <div class="sidebar-header">
         <h3>Chats</h3>
@@ -44,10 +40,10 @@
       <button onclick="createNewChat()" class="secondary-btn full-width">+ New Chat</button>
     </div>
 
-    <!-- Overlay -->
     <div id="overlay" class="overlay"></div>
   </div>
 
+  <!-- Script в конце body БЕЗ defer -->
   <script src="app.js"></script>
 </body>
 </html>
