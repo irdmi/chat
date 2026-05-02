@@ -5,119 +5,80 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Secure Chat</title>
   <link rel="stylesheet" href="styles.css">
-  <!-- CryptoJS for legacy support if needed, though we use Web Crypto now -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 </head>
 <body>
-
-  <!-- Main App Wrapper -->
-  <div class="app-wrapper">
-    
-    <!-- Header -->
+  <div class="container">
+    <!-- Header with buttons -->
     <header class="header">
-      <button id="menu-btn" class="icon-btn" title="Menu">☰</button>
-      <h1 id="chat-title">Secure Chat</h1>
-      <div class="header-actions">
-        <button id="pwd-btn" class="icon-btn" title="Generate Password">🔑</button>
-        <button id="reload-btn" class="icon-btn" title="Reload">↻</button>
-      </div>
+      <button id="menu-btn" class="icon-btn" title="Chats">☰</button>
+      <h1 id="display-name">Chat</h1>
+      <button id="pwd-btn" class="icon-btn" title="Generate Password">🔑</button>
     </header>
 
-    <!-- Content Area -->
-    <div class="content-area">
-      
-      <!-- Login Screen -->
-      <div id="login-screen" class="screen active">
-        <h2>Join or Create</h2>
-        <div class="login-form">
-          <input type="text" id="userName" placeholder="Display name" maxlength="32">
-          <input type="password" id="seedPhrase" placeholder="Encryption seed (keep secret)" autocomplete="off">
-          <div class="btn-group">
-            <button onclick="enterChat()" class="primary-btn">Join Chat</button>
-            <button onclick="createNewChat()" class="secondary-btn">+ New Chat</button>
-          </div>
-        </div>
-        <p class="hint">💡 Your seed never leaves this device. Lose it = lose access.</p>
-      </div>
+    <!-- Login Screen -->
+    <div id="login-screen">
+      <h2>Join Chat</h2>
+      <input type="text" id="userName" placeholder="Your name">
+      <input type="password" id="seedPhrase" placeholder="Encryption seed (key)">
+      <button onclick="enterChat()">Go chatting</button>
+    </div>
 
-      <!-- Chat Screen -->
-      <div id="chat-screen" class="screen hidden">
-        <div id="messages" class="messages-container"></div>
-        <div class="input-area">
-          <input type="text" id="msgInput" placeholder="Type a message..." autocomplete="off">
-          <button class="send-btn" onclick="sendMessage()">➤</button>
-        </div>
+    <!-- Chat Screen -->
+    <div id="chat-screen" style="display: none;">
+      <div id="messages"></div>
+      <div class="input-area">
+        <input type="text" id="msgInput" placeholder="Message...">
+        <button class="send-btn" onclick="sendMessage()">➤</button>
       </div>
-
     </div>
 
     <!-- Sidebar (Chat List) -->
-    <aside id="sidebar" class="sidebar">
+    <div id="sidebar" class="sidebar">
       <div class="sidebar-header">
         <h3>Chats</h3>
         <button id="close-sidebar" class="close-btn">✕</button>
       </div>
       <ul id="chat-list"></ul>
-      <div class="sidebar-footer">
-        <button onclick="createNewChat()" class="secondary-btn full-width">+ New Chat</button>
-      </div>
-    </aside>
-    <!-- Overlay for sidebar -->
-    <div id="sidebar-overlay" class="overlay hidden"></div>
-
-    <!-- Modals -->
-    <div id="modal-overlay" class="modal-overlay hidden">
-      
-      <!-- Password Generator Modal -->
-      <div id="pwd-modal" class="modal hidden">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>🔑 Generate Password</h3>
-            <button onclick="closePwdModal()" class="close-btn">✕</button>
-          </div>
-          <div class="pwd-controls">
-            <div class="control-row">
-              <label>Length: <span id="pwd-len-val">256</span></label>
-              <input type="range" id="pwd-len" min="16" max="512" value="256" step="16">
-            </div>
-            <fieldset class="pwd-sets">
-              <legend>Character sets</legend>
-              <label><input type="checkbox" id="pwd-az" checked> a–z</label>
-              <label><input type="checkbox" id="pwd-AZ" checked> A–Z</label>
-              <label><input type="checkbox" id="pwd-09" checked> 0–9</label>
-              <label><input type="checkbox" id="pwd-sym"> Symbols</label>
-            </fieldset>
-            <div class="pwd-output">
-              <code id="pwd-result">—</code>
-              <button onclick="copyPassword()" class="icon-btn">📋</button>
-            </div>
-            <div class="pwd-actions">
-              <button onclick="generatePassword()" class="primary-btn">🔄 Generate</button>
-              <button onclick="copyConfigLink()" class="secondary-btn">🔗 Copy Link</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Rate Limit Modal -->
-      <div id="rate-modal" class="modal hidden">
-        <div class="modal-content warn">
-          <h3>⚠️ Rate Limit Warning</h3>
-          <p>GitHub API limit is low. Sending will be delayed.</p>
-          <div class="modal-actions">
-            <button onclick="waitAndSend()" class="secondary-btn">Wait & Send Later</button>
-            <button onclick="sendNow()" class="primary-btn">Send Now (Risk Limit)</button>
-          </div>
-        </div>
-      </div>
-
+      <button onclick="createNewChat()" class="secondary-btn">+ New Chat</button>
     </div>
 
-    <!-- Toast Notification -->
-    <div id="toast" class="toast hidden"></div>
+    <!-- Password Generator Modal -->
+    <div id="pwd-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>🔑 Generate Password</h3>
+          <button onclick="closePwdModal()" class="close-btn">✕</button>
+        </div>
+        <div class="pwd-controls">
+          <label>Length: <span id="pwd-len-val">256</span></label>
+          <input type="range" id="pwd-len" min="16" max="512" value="256" step="16">
+          
+          <fieldset class="pwd-sets">
+            <legend>Character sets</legend>
+            <label><input type="checkbox" id="pwd-az" checked> a–z</label>
+            <label><input type="checkbox" id="pwd-AZ" checked> A–Z</label>
+            <label><input type="checkbox" id="pwd-09" checked> 0–9</label>
+            <label><input type="checkbox" id="pwd-sym"> Symbols</label>
+          </fieldset>
+          
+          <div class="pwd-output">
+            <code id="pwd-result">—</code>
+            <button onclick="copyPassword()" class="icon-btn">📋</button>
+          </div>
+          
+          <div class="pwd-actions">
+            <button onclick="generatePassword()" class="primary-btn">🔄 Generate</button>
+            <button onclick="copyConfigLink()" class="secondary-btn">🔗 Copy Link</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
+    <!-- Overlay for sidebar -->
+    <div id="overlay" class="overlay"></div>
   </div>
 
-  <script src="js/app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
