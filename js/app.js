@@ -7,28 +7,48 @@ let currentChatId = null;
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
+  console.log('DOM loaded');
   setupEventListeners();
   loadChatsFromStorage();
 });
 
 function setupEventListeners() {
+  console.log('Setting up event listeners');
+  
   // Menu button
-  document.getElementById('menu-btn').addEventListener('click', () => {
-    document.getElementById('sidebar').classList.add('open');
-    document.getElementById('overlay').classList.add('show');
-  });
+  const menuBtn = document.getElementById('menu-btn');
+  if (menuBtn) {
+    menuBtn.addEventListener('click', () => {
+      console.log('Menu clicked');
+      document.getElementById('sidebar').classList.add('open');
+      document.getElementById('overlay').classList.add('show');
+    });
+  }
   
   // Close sidebar
-  document.getElementById('close-sidebar').addEventListener('click', closeSidebar);
-  document.getElementById('overlay').addEventListener('click', closeSidebar);
+  const closeBtn = document.getElementById('close-sidebar');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', closeSidebar);
+  }
+  
+  const overlay = document.getElementById('overlay');
+  if (overlay) {
+    overlay.addEventListener('click', closeSidebar);
+  }
   
   // Reload button
-  document.getElementById('reload-btn').addEventListener('click', loadMessages);
+  const reloadBtn = document.getElementById('reload-btn');
+  if (reloadBtn) {
+    reloadBtn.addEventListener('click', loadMessages);
+  }
   
   // Enter key for messages
-  document.getElementById('msgInput').addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') sendMessage();
-  });
+  const msgInput = document.getElementById('msgInput');
+  if (msgInput) {
+    msgInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
+  }
 }
 
 function closeSidebar() {
@@ -38,6 +58,7 @@ function closeSidebar() {
 
 // ===== CHAT FUNCTIONS =====
 function enterChat() {
+  console.log('enterChat called');
   const nameInput = document.getElementById('userName');
   const seedInput = document.getElementById('seedPhrase');
   
@@ -58,6 +79,7 @@ function enterChat() {
 }
 
 function createNewChat() {
+  console.log('createNewChat called');
   const name = prompt('Chat name:');
   const seed = prompt('Encryption seed:');
   if (!name || !seed) return;
@@ -104,6 +126,7 @@ function switchChat(id) {
 
 // ===== MESSAGES =====
 async function loadMessages() {
+  console.log('loadMessages called');
   const msgDiv = document.getElementById('messages');
   if (!msgDiv) return;
   
@@ -140,6 +163,7 @@ async function loadMessages() {
 }
 
 async function sendMessage() {
+  console.log('sendMessage called');
   const input = document.getElementById('msgInput');
   const text = input.value.trim();
   if (!text) return;
