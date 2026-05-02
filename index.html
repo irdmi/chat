@@ -1,33 +1,117 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Chat</title>
-    <link rel="stylesheet" href="styles.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js" defer></script>
-    <script src="app.js" defer></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="End-to-end encrypted chat with client-side password generation">
+  <title>Secure Chat</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js" defer></script>
+  <script src="js/password-gen.js" defer></script>
+  <script src="js/app.js" defer></script>
 </head>
 <body>
+  <div class="app">
+    <!-- Header -->
+    <header class="header">
+      <button id="menu-btn" class="icon-btn" aria-label="Open chats">☰</button>
+      <h1 id="chat-title" class="chat-title">No Chat</h1>
+      <div class="header-actions">
+        <button id="pwd-gen-btn" class="icon-btn small-btn" title="Generate password">🔑</button>
+        <button id="share-chat-btn" class="icon-btn small-btn" title="Share chat link">🔗</button>
+        <button id="reload-btn" class="icon-btn small-btn" title="Reload">↻</button>
+      </div>
+    </header>
 
-<div id="login-screen">
-    <h2>Chat</h2>
-    <input type="text" id="userName" placeholder="Name">
-    <input type="password" id="seedPhrase" placeholder="key(seed)">
-    <button onclick="enterChat()">Go chatting</button>
-</div>
-
-<div id="chat-screen">
-    <div class="header">
-        <span id="display-name"></span>
-        <button onclick="loadMessages()" class="small-btn">Reload</button>
+    <!-- Login Panel -->
+    <div id="login-panel" class="panel">
+      <h2>Join or Create Chat</h2>
+      <input type="text" id="input-name" placeholder="Display name" maxlength="32" autocomplete="nickname">
+      <input type="password" id="input-seed" placeholder="Encryption seed (keep secret)" autocomplete="off">
+      <div class="login-actions">
+        <button id="join-btn" class="primary">Join Chat</button>
+        <button id="create-chat-btn" class="secondary">+ New Chat</button>
+      </div>
+      <p class="hint">💡 Your seed never leaves this device. Lose it = lose access.</p>
     </div>
-    <div id="messages"></div>
-    <div class="input-area">
-        <input type="text" id="msgInput" placeholder="Message..." autocomplete="off">
-        <button class="send-btn" onclick="sendMessage()">➤</button>
-    </div>
-</div>
 
+    <!-- Chat List Sidebar -->
+    <aside id="chat-sidebar" class="sidebar hidden">
+      <div class="sidebar-header">
+        <h2>Chats</h2>
+        <button id="close-sidebar" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <ul id="chat-list" class="chat-list"></ul>
+      <div class="sidebar-footer">
+        <button id="new-chat-sidebar" class="secondary full-width">+ New Chat</button>
+        <p class="hint small">Stored locally in your browser</p>
+      </div>
+    </aside>
+
+    <!-- Chat Area -->
+    <main id="chat-area" class="chat-area hidden">
+      <div id="messages" class="messages" role="log" aria-live="polite"></div>
+      <div class="input-bar">
+        <input type="text" id="msg-input" class="msg-input" placeholder="Type a message..." autocomplete="off" aria-label="Message">
+        <button id="send-btn" class="send-btn" aria-label="Send">➤</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- Password Generator Modal -->
+  <div id="pwd-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="pwd-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="pwd-title">🔑 Generate Password</h3>
+        <button id="pwd-close" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      
+      <div class="pwd-controls">
+        <div class="control-row">
+          <label for="pwd-len">Length: <span id="pwd-len-val">256</span></label>
+          <input type="range" id="pwd-len" min="16" max="512" value="256" step="16" aria-label="Password length">
+        </div>
+        
+        <fieldset class="pwd-sets">
+          <legend>Character sets</legend>
+          <label><input type="checkbox" data-set="az" checked> a–z</label>
+          <label><input type="checkbox" data-set="AZ" checked> A–Z</label>
+          <label><input type="checkbox" data-set="09" checked> 0–9</label>
+          <label><input type="checkbox" data-set="sym"> Symbols</label>
+          <label><input type="checkbox" data-set="safe"> Safe only (no i/l/1/O/0)</label>
+        </fieldset>
+        
+        <div class="pwd-output">
+          <code id="pwd-result" class="pwd-code" aria-live="polite">—</code>
+          <button id="pwd-copy" class="icon-btn small-btn" title="Copy to clipboard">📋</button>
+        </div>
+        
+        <div class="pwd-actions">
+          <button id="pwd-generate" class="primary">🔄 Regenerate</button>
+          <button id="pwd-share-config" class="secondary">🔗 Copy Config Link</button>
+        </div>
+      </div>
+      
+      <p class="hint">💡 Use <code>#pwd:256-az,AZ,09,sym</code> in URL to auto-generate</p>
+    </div>
+  </div>
+
+  <!-- Rate Limit Warning Modal -->
+  <div id="rate-modal" class="modal hidden" role="alertdialog" aria-modal="true">
+    <div class="modal-content warn">
+      <h3>⚠️ Rate Limit Warning</h3>
+      <p id="rate-message">GitHub API limit is low. Sending will be delayed.</p>
+      <div class="modal-actions">
+        <button id="rate-wait" class="secondary">Wait & Send Later</button>
+        <button id="rate-bypass" class="primary">Send Now (Risk Limit)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notifications -->
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <!-- Offline Indicator -->
+  <div id="offline-banner" class="banner hidden">⚠️ You are offline. Messages will queue.</div>
 </body>
 </html>
