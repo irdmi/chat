@@ -22,7 +22,7 @@ function setupEventListeners() {
   document.getElementById('close-sidebar')?.addEventListener('click', closeSidebar);
   document.getElementById('overlay')?.addEventListener('click', closeSidebar);
   
-  // Password generator
+  // Password generator button
   document.getElementById('pwd-btn')?.addEventListener('click', () => {
     document.getElementById('pwd-modal').classList.add('show');
     generatePassword();
@@ -32,6 +32,9 @@ function setupEventListeners() {
   document.getElementById('pwd-len')?.addEventListener('input', (e) => {
     document.getElementById('pwd-len-val').textContent = e.target.value;
   });
+  
+  // Reload button
+  document.getElementById('reload-btn')?.addEventListener('click', loadMessages);
   
   // Enter key for messages
   document.getElementById('msgInput')?.addEventListener('keypress', (e) => {
@@ -57,7 +60,7 @@ function enterChat() {
   currentSeed = seedInput.value.trim();
   
   if (!currentUser || !currentSeed) {
-    alert("Enter name and seed!");
+    alert('Enter name and seed!');
     return;
   }
   
@@ -164,16 +167,16 @@ async function sendMessage() {
     const resp = await fetch(`${PROXY_URL}?action=write`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: FILE_NAME, encrypted })
+      body: JSON.stringify({ file: FILE_NAME, encrypted: encrypted })
     });
     
     const result = await resp.json();
-    if (!result.success) throw new Error(result.error);
+    if (!result.success) throw new Error(result.error || 'Unknown error');
     
     loadMessages();
   } catch (err) {
     console.error('Send error:', err);
-    alert("Send error: " + err.message);
+    alert('Send error: ' + err.message);
     input.value = text;
   }
 }
