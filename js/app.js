@@ -7,19 +7,15 @@ let currentChatId = null;
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('DOM loaded');
   setupEventListeners();
   loadChatsFromStorage();
 });
 
 function setupEventListeners() {
-  console.log('Setting up event listeners');
-  
   // Menu button
   const menuBtn = document.getElementById('menu-btn');
   if (menuBtn) {
     menuBtn.addEventListener('click', () => {
-      console.log('Menu clicked');
       document.getElementById('sidebar').classList.add('open');
       document.getElementById('overlay').classList.add('show');
     });
@@ -58,7 +54,6 @@ function closeSidebar() {
 
 // ===== CHAT FUNCTIONS =====
 function enterChat() {
-  console.log('enterChat called');
   const nameInput = document.getElementById('userName');
   const seedInput = document.getElementById('seedPhrase');
   
@@ -79,7 +74,6 @@ function enterChat() {
 }
 
 function createNewChat() {
-  console.log('createNewChat called');
   const name = prompt('Chat name:');
   const seed = prompt('Encryption seed:');
   if (!name || !seed) return;
@@ -126,7 +120,6 @@ function switchChat(id) {
 
 // ===== MESSAGES =====
 async function loadMessages() {
-  console.log('loadMessages called');
   const msgDiv = document.getElementById('messages');
   if (!msgDiv) return;
   
@@ -163,7 +156,6 @@ async function loadMessages() {
 }
 
 async function sendMessage() {
-  console.log('sendMessage called');
   const input = document.getElementById('msgInput');
   const text = input.value.trim();
   if (!text) return;
