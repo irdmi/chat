@@ -215,11 +215,16 @@ export class CallModule {
       let messagesToProcess = [];
       
       // Поддержка разных форматов ответа от воркера
-      if (data.content && Array.isArray(data.content)) {
-        // Формат: { content: ['encrypted1', 'encrypted2', ...] }
+      // Формат 1: { messages: [{ encrypted: '...' }, ...] } - основной формат нашего воркера
+      if (data.messages && Array.isArray(data.messages)) {
+        messagesToProcess = data.messages.map(m => m.encrypted || m);
+      } 
+      // Формат 2: { content: ['encrypted1', 'encrypted2', ...] }
+      else if (data.content && Array.isArray(data.content)) {
         messagesToProcess = data.content;
-      } else if (data.files && data.files[this.FILE_CALL]) {
-        // Формат: { files: { 'chat-calls': { content: '[...]' } } }
+      } 
+      // Формат 3: { files: { 'chat-calls': { content: '[...]' } } }
+      else if (data.files && data.files[this.FILE_CALL]) {
         const fileData = data.files[this.FILE_CALL];
         if (fileData.content) {
           try {
@@ -229,9 +234,6 @@ export class CallModule {
             }
           } catch(e) {}
         }
-      } else if (data.messages && Array.isArray(data.messages)) {
-        // Формат: { messages: [{ encrypted: '...' }, ...] }
-        messagesToProcess = data.messages.map(m => m.encrypted || m);
       }
 
       for (const encrypted of messagesToProcess) {
@@ -252,12 +254,10 @@ export class CallModule {
           }
         } catch (e) {
           // Тихо игнорируем ошибки расшифровки - это могут быть старые сообщения с другим ключом
-          // Silently ignore decryption errors
         }
       }
     } catch (err) {
       // Тихо игнорируем ошибки загрузки - файл может не существовать
-      // Silently ignore load errors
     }
   }
 
