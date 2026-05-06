@@ -200,6 +200,10 @@ export class CallModule {
       });
 
       if (!response.ok) {
+        // Файл может не существовать ещё - это нормально
+        if (response.status === 404) {
+          return;
+        }
         throw new Error('HTTP ' + response.status);
       }
 
@@ -223,12 +227,14 @@ export class CallModule {
               }
             }
           } catch (e) {
-            console.warn('Decrypt signal failed:', e);
+            // Тихо игнорируем ошибки расшифровки - это могут быть старые сообщения с другим ключом
+            // console.warn('Decrypt signal failed:', e);
           }
         }
       }
     } catch (err) {
-      console.warn('Load signals error:', err);
+      // Тихо игнорируем ошибки загрузки - файл может не существовать
+      // console.warn('Load signals error:', err);
     }
   }
 

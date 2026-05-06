@@ -188,14 +188,15 @@ async function loadMessages() {
             msgDiv.appendChild(div);
           }
         } catch (e) {
-          console.warn('Decrypt failed:', e);
+          // Игнорируем ошибки расшифровки - это могут быть сообщения с другим ключом или сигналы WebRTC
+          // console.warn('Decrypt failed:', e);
         }
       }
       msgDiv.scrollTop = msgDiv.scrollHeight;
     }
     
-    // If call is active, load WebRTC signals from separate file
-    if (callModule && !document.getElementById('call-overlay').classList.contains('hidden')) {
+    // If call is active and in a real call state, load WebRTC signals from separate file
+    if (callModule && callModule.callState !== 'IDLE') {
       await callModule.loadSignals();
     }
   } catch (err) {
