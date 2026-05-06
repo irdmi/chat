@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Secure Chat</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="call.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js" defer></script>
 </head>
 <body>
@@ -12,6 +13,7 @@
     <header class="header">
       <button id="menu-btn" class="icon-btn">☰</button>
       <h1 id="display-name">Chat</h1>
+      <button id="call-btn" class="icon-btn small-btn" title="Start call">📞</button>
       <button id="reload-btn" class="icon-btn small-btn">↻</button>
     </header>
 
@@ -28,6 +30,25 @@
       <div class="input-area">
         <input type="text" id="msgInput" placeholder="Message...">
         <button class="send-btn" onclick="sendMessage()">➤</button>
+      </div>
+    </div>
+
+    <!-- Call Overlay -->
+    <div id="call-overlay" class="call-overlay hidden">
+      <video id="remote-video" autoplay playsinline class="remote-video"></video>
+      <video id="local-video" autoplay playsinline muted class="local-video"></video>
+      
+      <div class="call-info">
+        <h3 id="call-peer">User</h3>
+        <span id="call-status">Connecting...</span>
+        <span id="call-type" class="badge">🟡 Relay</span>
+        <span id="call-timer">00:00</span>
+      </div>
+      
+      <div class="call-controls">
+        <button id="btn-mute" class="ctrl-btn">🔇</button>
+        <button id="btn-video" class="ctrl-btn">📹</button>
+        <button id="btn-hangup" class="ctrl-btn hangup">✕</button>
       </div>
     </div>
 

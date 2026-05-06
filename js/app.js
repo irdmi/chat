@@ -5,10 +5,54 @@ let currentUser = '';
 let currentSeed = '';
 let currentChatId = null;
 
+// Call module variables
+let callModule = null;
+let callUI = null;
+
 // ===== INIT =====
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   loadChatsFromStorage();
+  
+  // Initialize call module
+  const remoteVideo = document.getElementById('remote-video');
+  const localVideo = document.getElementById('local-video');
+  
+  if (remoteVideo && localVideo) {
+    // Import call modules dynamically
+    try {
+      const { CallModule } = await import('./call.js');
+      const { CallUI } = await import('./call-ui.js');
+      
+      callModule = new CallModule({ currentUser: '', currentSeed: '' }, PROXY_URL);
+      await callModule.init(remoteVideo, localVideo);
+      callUI = new CallUI(callModule);
+      callUI.bindControls();
+    } catch (e) {
+      console.error('Failed to load call modules:', e);
+    }
+  }
+  
+  // Call button handler
+  document.getElementById('call-btn')?.addEventListener('click', async () => {
+    if (!currentSeed) {
+      alert('Join a chat first');
+      return;
+    }
+    if (callModule) {
+      callModule.chat.currentUser = currentUser;
+      callModule.chat.currentSeed = currentSeed;
+      try {
+        const state = await callModule.startCall(true, false); // audio-only by default
+        if (state && callUI) {
+          callUI.show(currentUser);
+        }
+      } catch (err) {
+        console.error('Failed to start call:', err);
+        alert('Failed to start call: ' + err.message);
+      }
+    }
+  });
 });
 
 function setupEventListeners() {
@@ -148,6 +192,11 @@ async function loadMessages() {
         }
       }
       msgDiv.scrollTop = msgDiv.scrollHeight;
+    }
+    
+    // If call is active, load WebRTC signals from separate file
+    if (callModule && !document.getElementById('call-overlay').classList.contains('hidden')) {
+      await callModule.loadSignals();
     }
   } catch (err) {
     console.error('Load error:', err);
