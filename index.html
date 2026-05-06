@@ -6,6 +6,8 @@
   <title>Secure Chat</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="call.css">
+  <!-- Заглушка favicon чтобы избежать 404 -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js" defer></script>
 </head>
 <body>
@@ -19,8 +21,9 @@
 
     <div id="login-screen">
       <h2>Join Chat</h2>
-      <input type="text" id="userName" placeholder="Your name">
-      <input type="password" id="seedPhrase" placeholder="Encryption seed (key)">
+      <!-- autocomplete="off" чтобы браузер не предлагал сохранение -->
+      <input type="text" id="userName" placeholder="Your name" autocomplete="off">
+      <input type="password" id="seedPhrase" placeholder="Encryption seed (key)" autocomplete="off">
       <button onclick="enterChat()">Join Chat</button>
       <button onclick="createNewChat()" class="secondary-btn">+ New Chat</button>
     </div>
@@ -28,7 +31,7 @@
     <div id="chat-screen" style="display: none;">
       <div id="messages"></div>
       <div class="input-area">
-        <input type="text" id="msgInput" placeholder="Message...">
+        <input type="text" id="msgInput" placeholder="Message..." autocomplete="off">
         <button class="send-btn" onclick="sendMessage()">➤</button>
       </div>
     </div>

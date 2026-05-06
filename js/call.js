@@ -166,6 +166,7 @@ export class CallModule {
         timestamp: Date.now()
       };
 
+      // Шифруем сообщение текущим seed чата
       const encrypted = CryptoJS.AES.encrypt(
         JSON.stringify(msg), 
         this.chat.currentSeed || ''
@@ -208,9 +209,11 @@ export class CallModule {
       existingMessages.push(encrypted);
 
       // 3. Отправляем обновленный массив обратно
+      // Воркер ожидает { encrypted: '...' } для добавления одной записи,
+      // или { content: '[...]' } для полной замены
       const body = {
-        file: this.FILE_CALL,
-        content: JSON.stringify(existingMessages)
+        encrypted: encrypted,  // Просто отправляем зашифрованную строку
+        file: this.FILE_CALL   // Имя файла для записи
       };
       
       // Если файл существовал, передаем sha для обновления
