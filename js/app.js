@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       callUI = new CallUI(callModule);
       callUI.bindControls();
     } catch (e) {
-      console.error('Failed to load call modules:', e);
+      // Silently ignore call module load errors
     }
   }
   
@@ -48,8 +48,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           callUI.show(currentUser);
         }
       } catch (err) {
-        console.error('Failed to start call:', err);
-        alert('Failed to start call: ' + err.message);
+        // Silently ignore start call errors
       }
     }
   });
@@ -189,7 +188,7 @@ async function loadMessages() {
           }
         } catch (e) {
           // Игнорируем ошибки расшифровки - это могут быть сообщения с другим ключом или сигналы WebRTC
-          // console.warn('Decrypt failed:', e);
+          // Silently ignore decryption errors
         }
       }
       msgDiv.scrollTop = msgDiv.scrollHeight;
@@ -200,7 +199,7 @@ async function loadMessages() {
       await callModule.loadSignals();
     }
   } catch (err) {
-    console.error('Load error:', err);
+    // Silently ignore load errors
     msgDiv.innerHTML = '<div class="msg-item" style="color:#f85">Load failed</div>';
   }
 }
@@ -227,7 +226,7 @@ async function sendMessage() {
     
     loadMessages();
   } catch (err) {
-    console.error('Send error:', err);
+    // Silently ignore send errors
     alert('Send error: ' + err.message);
     input.value = text;
   }

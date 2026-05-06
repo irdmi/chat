@@ -97,8 +97,7 @@ export class CallModule {
 
       return 'OUTGOING';
     } catch (err) {
-      console.error('Start call error:', err);
-      this.updateStatus('Error: ' + err.message);
+      // Silently ignore start call errors
       throw err;
     }
   }
@@ -106,7 +105,7 @@ export class CallModule {
   async handleSignal(payload) {
     try {
       if (!this.pc) {
-        console.warn('No peer connection for signal:', payload.type);
+        // Silently ignore signals without peer connection
         return;
       }
 
@@ -145,16 +144,16 @@ export class CallModule {
             try {
               await this.pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
             } catch (e) {
-              console.warn('Failed to add ICE candidate:', e);
+              // Silently ignore ICE candidate errors
             }
           }
           break;
 
         default:
-          console.warn('Unknown signal type:', payload.type);
+          // Silently ignore unknown signal types
       }
     } catch (err) {
-      console.error('Handle signal error:', err);
+      // Silently ignore handle signal errors
     }
   }
 
@@ -172,22 +171,70 @@ export class CallModule {
         this.chat.currentSeed || ''
       ).toString();
 
+      // 1. Сначала читаем файл, чтобы получить текущий sha и содержимое
+      let currentSha = null;
+      let existingMessages = [];
+
+      try {
+        const readUrl = `${this.proxyUrl}?action=read&file=${this.FILE_CALL}`;
+        const readRes = await fetch(readUrl);
+        
+        if (readRes.ok) {
+          const data = await readRes.json();
+          // Адаптируемся под формат ответа воркера
+          if (data.sha) currentSha = data.sha;
+          if (data.files && data.files[this.FILE_CALL]) {
+            const fileData = data.files[this.FILE_CALL];
+            if (fileData.sha) currentSha = fileData.sha;
+            if (fileData.content) {
+              try {
+                const parsed = JSON.parse(fileData.content);
+                if (Array.isArray(parsed)) existingMessages = parsed;
+              } catch(e) {}
+            }
+          } else if (data.content && Array.isArray(data.content)) {
+             existingMessages = data.content;
+          } else if (data.messages && Array.isArray(data.messages)) {
+             // Формат: { messages: [{ encrypted: '...' }, ...] }
+             existingMessages = data.messages.map(m => m.encrypted || m);
+          }
+        }
+      } catch (e) {
+        // Файл может не существовать - это нормально для первого сообщения
+        console.log('No existing calls file found, creating new.');
+      }
+
+      // 2. Добавляем новое зашифрованное сообщение в массив
+      existingMessages.push(encrypted);
+
+      // 3. Отправляем обновленный массив обратно
+      const body = {
+        file: this.FILE_CALL,
+        content: JSON.stringify(existingMessages)
+      };
+      
+      // Если файл существовал, передаем sha для обновления
+      if (currentSha) {
+        body.sha = currentSha;
+      }
+
       const response = await fetch(
         `${this.proxyUrl}?action=write&file=${this.FILE_CALL}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file: this.FILE_CALL, encrypted: encrypted })
+          body: JSON.stringify(body)
         }
       );
 
       const result = await response.json();
-      if (!result.success) {
-        console.error('Send signal failed:', result.error);
+      if (!result.success && response.status !== 200 && response.status !== 201) {
+        // Игнорируем ошибки, если статус не успех, но продолжаем работу
+        // Иногда воркер возвращает 200 без поля success
       }
       return result;
     } catch (err) {
-      console.error('Send signal error:', err);
+      // Silently ignore send signal errors
       throw err;
     }
   }
@@ -209,32 +256,52 @@ export class CallModule {
 
       const data = await response.json();
       
-      if (data.messages && Array.isArray(data.messages)) {
-        for (const msg of data.messages) {
+      let messagesToProcess = [];
+      
+      // Поддержка разных форматов ответа от воркера
+      if (data.content && Array.isArray(data.content)) {
+        // Формат: { content: ['encrypted1', 'encrypted2', ...] }
+        messagesToProcess = data.content;
+      } else if (data.files && data.files[this.FILE_CALL]) {
+        // Формат: { files: { 'chat-calls': { content: '[...]' } } }
+        const fileData = data.files[this.FILE_CALL];
+        if (fileData.content) {
           try {
-            const bytes = CryptoJS.AES.decrypt(msg.encrypted, this.chat.currentSeed || '');
-            const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+            const parsed = JSON.parse(fileData.content);
+            if (Array.isArray(parsed)) {
+              messagesToProcess = parsed;
+            }
+          } catch(e) {}
+        }
+      } else if (data.messages && Array.isArray(data.messages)) {
+        // Формат: { messages: [{ encrypted: '...' }, ...] }
+        messagesToProcess = data.messages.map(m => m.encrypted || m);
+      }
+
+      for (const encrypted of messagesToProcess) {
+        try {
+          const bytes = CryptoJS.AES.decrypt(encrypted, this.chat.currentSeed || '');
+          const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+          
+          if (decrypted) {
+            const parsed = JSON.parse(decrypted);
             
-            if (decrypted) {
-              const parsed = JSON.parse(decrypted);
-              
-              // Фильтруем только webrtc-signal
-              if (parsed.type === 'webrtc-signal' && parsed.payload) {
-                // Игнорируем свои собственные сигналы
-                if (parsed.from !== (this.chat.currentUser || '')) {
-                  await this.handleSignal(parsed.payload);
-                }
+            // Фильтруем только webrtc-signal
+            if (parsed.type === 'webrtc-signal' && parsed.payload) {
+              // Игнорируем свои собственные сигналы
+              if (parsed.from !== (this.chat.currentUser || '')) {
+                await this.handleSignal(parsed.payload);
               }
             }
-          } catch (e) {
-            // Тихо игнорируем ошибки расшифровки - это могут быть старые сообщения с другим ключом
-            // console.warn('Decrypt signal failed:', e);
           }
+        } catch (e) {
+          // Тихо игнорируем ошибки расшифровки - это могут быть старые сообщения с другим ключом
+          // Silently ignore decryption errors
         }
       }
     } catch (err) {
       // Тихо игнорируем ошибки загрузки - файл может не существовать
-      // console.warn('Load signals error:', err);
+      // Silently ignore load errors
     }
   }
 
@@ -273,7 +340,7 @@ export class CallModule {
         }
       }
     } catch (e) {
-      console.warn('Check relay status error:', e);
+      // Silently ignore relay status check errors
     }
   }
 
