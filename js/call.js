@@ -172,61 +172,14 @@ export class CallModule {
         this.chat.currentSeed || ''
       ).toString();
 
-      // 1. Сначала читаем файл, чтобы получить текущий sha и содержимое
-      let currentSha = null;
-      let existingMessages = [];
-
-      try {
-        const readUrl = `${this.proxyUrl}?action=read&file=${this.FILE_CALL}`;
-        const readRes = await fetch(readUrl);
-        
-        if (readRes.ok) {
-          const data = await readRes.json();
-          // Адаптируемся под формат ответа воркера
-          if (data.sha) currentSha = data.sha;
-          if (data.files && data.files[this.FILE_CALL]) {
-            const fileData = data.files[this.FILE_CALL];
-            if (fileData.sha) currentSha = fileData.sha;
-            if (fileData.content) {
-              try {
-                const parsed = JSON.parse(fileData.content);
-                if (Array.isArray(parsed)) existingMessages = parsed;
-              } catch(e) {}
-            }
-          } else if (data.content && Array.isArray(data.content)) {
-             existingMessages = data.content;
-          } else if (data.messages && Array.isArray(data.messages)) {
-             // Формат: { messages: [{ encrypted: '...' }, ...] }
-             existingMessages = data.messages.map(m => m.encrypted || m);
-          }
-        }
-      } catch (e) {
-        // Файл может не существовать - это нормально для первого сообщения
-        console.log('No existing calls file found, creating new.');
-      }
-
-      // 2. Добавляем новое зашифрованное сообщение в массив
-      existingMessages.push(encrypted);
-
-      // 3. Отправляем обновленный массив обратно
-      // Воркер ожидает { encrypted: '...' } для добавления одной записи,
-      // или { content: '[...]' } для полной замены
-      const body = {
-        encrypted: encrypted,  // Просто отправляем зашифрованную строку
-        file: this.FILE_CALL   // Имя файла для записи
-      };
-      
-      // Если файл существовал, передаем sha для обновления
-      if (currentSha) {
-        body.sha = currentSha;
-      }
-
+      // Отправляем зашифрованное сообщение в отдельный файл chat-calls
+      // Воркер сам прочитает текущее содержимое и добавит новое сообщение
       const response = await fetch(
         `${this.proxyUrl}?action=write&file=${this.FILE_CALL}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
+          body: JSON.stringify({ encrypted: encrypted })
         }
       );
 

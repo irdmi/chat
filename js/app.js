@@ -215,14 +215,18 @@ async function sendMessage() {
   input.value = '';
   
   try {
-    const resp = await fetch(PROXY_URL + '?action=write', {
+    // Отправляем только зашифрованное сообщение, без поля file
+    // Воркер использует файл по умолчанию (chat) или из параметра URL
+    const resp = await fetch(PROXY_URL + '?action=write&file=' + encodeURIComponent(FILE_NAME), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: FILE_NAME, encrypted: encrypted })
+      body: JSON.stringify({ encrypted: encrypted })
     });
     
     const result = await resp.json();
-    if (!result.success) throw new Error(result.error || 'Unknown error');
+    if (!result.success && resp.status !== 200 && resp.status !== 201) {
+      throw new Error(result.error || 'HTTP ' + resp.status);
+    }
     
     loadMessages();
   } catch (err) {
