@@ -4,32 +4,24 @@ let currentUser = '';
 let currentSeed = '';
 let currentRoom = '';
 let localStream = null;
-let remoteStream = null;
 let peerConnection = null;
-let isCaller = false;
 let isConnected = false;
-let sdpPollInterval = null;
-let lastSdpIndex = -1;
-let pollRetryCount = 0;
-const MAX_POLL_RETRIES = 3;
-const POLL_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS = 120000;
+let isInitiator = false; // true = создали offer, false = принимаем offer
+let hasSentSdp = false; // Отправили ли мы уже свой SDP
+let pollInterval = null;
+let lastProcessedIndex = -1;
+let connectionTypeDisplay = null;
 
-// Cloudflare STUN servers
+// Cloudflare STUN + Google backup
 const ICE_SERVERS = {
   iceServers: [
-    { urls: 'stun:stun.cloudflare.com:3478' }
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:stun.l.google.com:19302' }
   ]
 };
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
-  const reloadBtn = document.getElementById('reload-sdp-btn');
-  if (reloadBtn) {
-    reloadBtn.addEventListener('click', loadRemoteSdpMessages);
-  }
-  
-  // Проверяем URL параметры (если пришли из чата)
   const urlParams = new URLSearchParams(window.location.search);
   const seedFromUrl = urlParams.get('seed');
   const nameFromUrl = urlParams.get('name');
@@ -37,35 +29,33 @@ document.addEventListener('DOMContentLoaded', () => {
   if (seedFromUrl && nameFromUrl) {
     document.getElementById('roomInput').value = seedFromUrl;
     document.getElementById('userName').value = nameFromUrl;
-    // Автоматически входим в комнату
-    setTimeout(() => enterCall(), 500);
+    setTimeout(() => enterCall(), 300);
   }
 });
 
-// ===== CALL FUNCTIONS =====
+// ===== CORE FUNCTIONS =====
 function enterCall() {
   const nameInput = document.getElementById('userName');
   const roomInput = document.getElementById('roomInput');
   
   currentUser = nameInput.value.trim();
   currentSeed = roomInput.value.trim();
-  currentRoom = 'sdp_' + currentSeed; // Уникальный файл для каждой комнаты
+  currentRoom = 'sdp_' + currentSeed;
   
   if (!currentUser || !currentSeed) {
-    alert('Enter name and Room ID!');
+    alert('Введите имя и ключ комнаты!');
     return;
   }
   
-  nameInput.value = '';
-  roomInput.value = '';
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('call-screen').style.display = 'flex';
-  document.getElementById('roomInfo').textContent = 'Room: ' + currentRoom;
+  document.getElementById('roomInfo').textContent = 'Комната: ' + currentSeed;
   
-  updateStatus('Listening for incoming calls...', 'disconnected');
+  updateStatus('Подключение к комнате...', 'disconnected');
+  updateConnectionType('Ожидание...');
   
-  // Запускаем прослушивание входящих звонков сразу при входе
-  startIncomingCallListener();
+  // Сразу начинаем мониторинг комнаты
+  startMonitoring();
 }
 
 async function startCall() {
@@ -74,34 +64,29 @@ async function startCall() {
     return;
   }
   
-  // Останавливаем прослушивание входящих, так как мы инициируем звонок
-  stopIncomingCallListener();
-  
   try {
-    // Get local media
+    updateStatus('Запрос доступа к камере...', 'connecting');
+    
     localStream = await navigator.mediaDevices.getUserMedia({ 
       video: true, 
       audio: true 
     });
     
     document.getElementById('localVideo').srcObject = localStream;
-    
-    // Create peer connection
     createPeerConnection();
     
-    // Add local tracks
     localStream.getTracks().forEach(track => {
       peerConnection.addTrack(track, localStream);
     });
     
-    // Create offer
+    // Создаём OFFER
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
     
-    // Wait for ICE candidates
-    await waitForIceGathering();
+    // Ждем ICE кандидаты (недолго)
+    await waitForIceGathering(3000);
     
-    // Encrypt and send offer via chat
+    // Отправляем OFFER
     const sdpData = {
       type: 'offer',
       sdp: peerConnection.localDescription.sdp,
@@ -110,173 +95,81 @@ async function startCall() {
     };
     
     await sendSdpMessage(sdpData);
+    hasSentSdp = true;
+    isInitiator = true;
     
-    updateStatus('Offer sent! Waiting for answer...', 'connecting');
+    updateStatus('Звонок... Ожидание ответа', 'connecting');
+    updateConnectionType('Отправка Offer через GitHub Gist');
     
-    isCaller = true;
     enableCallControls(true);
-    
-    // Start polling for answer
-    pollForRemoteSdp();
     
   } catch (err) {
     console.error('Start call error:', err);
-    alert('Failed to start call: ' + err.message);
-    updateStatus('Error: ' + err.message, 'disconnected');
+    updateStatus('Ошибка: ' + err.message, 'disconnected');
+    alert('Не удалось начать звонок: ' + err.message);
   }
-}
-
-async function receiveCall() {
-  // This is called when we receive an offer from remote
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({ 
-      video: true, 
-      audio: true 
-    });
-    
-    document.getElementById('localVideo').srcObject = localStream;
-    
-    createPeerConnection();
-    
-    localStream.getTracks().forEach(track => {
-      peerConnection.addTrack(track, localStream);
-    });
-    
-    enableCallControls(true);
-    
-  } catch (err) {
-    console.error('Receive call error:', err);
-    alert('Failed to receive call: ' + err.message);
-  }
-}
-
-// ===== AUTOMATIC CALL HANDLING =====
-let incomingCallListener = null;
-
-function startIncomingCallListener() {
-  // Запускаем прослушивание входящих звонков
-  if (incomingCallListener) {
-    clearInterval(incomingCallListener);
-  }
-  
-  updateStatus('Waiting for incoming call...', 'disconnected');
-  
-  incomingCallListener = setInterval(async () => {
-    if (!isConnected && !isCaller) {
-      await checkForIncomingCall();
-    }
-  }, POLL_INTERVAL_MS);
-}
-
-function stopIncomingCallListener() {
-  if (incomingCallListener) {
-    clearInterval(incomingCallListener);
-    incomingCallListener = null;
-  }
-}
-
-async function checkForIncomingCall() {
-  try {
-    const url = PROXY_URL + '?action=read&file=' + encodeURIComponent(currentRoom) + '&t=' + Date.now();
-    const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
-    
-    if (!response.ok) return;
-    
-    const data = await response.json();
-    
-    if (data.messages && Array.isArray(data.messages)) {
-      // Проверяем только последнее сообщение
-      const lastMsg = data.messages[data.messages.length - 1];
-      if (!lastMsg || !lastMsg.encrypted) return;
-      
-      try {
-        const bytes = CryptoJS.AES.decrypt(lastMsg.encrypted, currentSeed);
-        const decrypted = bytes.toString(CryptoJS.enc.Utf8);
-        const sdpData = JSON.parse(decrypted);
-        
-        // Если это offer и не от нас - автоматически принимаем звонок
-        if (sdpData.type === 'offer' && sdpData.from !== currentUser) {
-          // Останавливаем прослушивание
-          stopIncomingCallListener();
-          
-          updateStatus('Incoming call from ' + sdpData.from + '! Connecting...', 'connecting');
-          
-          // Автоматически применяем offer и отправляем answer
-          await handleIncomingOffer(sdpData);
-        }
-      } catch (e) {
-        // Не удалось расшифровать, игнорируем
-      }
-    }
-  } catch (err) {
-    console.error('Check incoming call error:', err);
-  }
-}
-
-async function handleIncomingOffer(offerData) {
-  if (!peerConnection) {
-    await receiveCall();
-  }
-  
-  // Устанавливаем remote description (offer)
-  await peerConnection.setRemoteDescription(new RTCSessionDescription({
-    type: 'offer',
-    sdp: offerData.sdp
-  }));
-  
-  // Создаём answer
-  const answer = await peerConnection.createAnswer();
-  await peerConnection.setLocalDescription(answer);
-  
-  await waitForIceGathering();
-  
-  const answerData = {
-    type: 'answer',
-    sdp: peerConnection.localDescription.sdp,
-    from: currentUser,
-    timestamp: Date.now()
-  };
-  
-  await sendSdpMessage(answerData);
-  
-  updateStatus('Answer sent! Connecting...', 'connecting');
-  
-  // Продолжаем polling для получения ICE кандидатов и завершения соединения
-  pollForRemoteSdp();
 }
 
 function createPeerConnection() {
+  if (peerConnection) {
+    peerConnection.close();
+  }
+  
   peerConnection = new RTCPeerConnection(ICE_SERVERS);
   
   peerConnection.onicecandidate = (event) => {
     if (event.candidate) {
-      console.log('New ICE candidate');
+      console.log('ICE candidate generated');
     }
   };
   
   peerConnection.ontrack = (event) => {
-    console.log('Received remote track');
-    remoteStream = event.streams[0];
-    document.getElementById('remoteVideo').srcObject = remoteStream;
+    console.log('Remote track received');
+    const remoteVideo = document.getElementById('remoteVideo');
+    if (event.streams && event.streams[0]) {
+      remoteVideo.srcObject = event.streams[0];
+    }
   };
   
   peerConnection.onconnectionstatechange = () => {
-    console.log('Connection state:', peerConnection.connectionState);
+    const state = peerConnection.connectionState;
+    console.log('Connection state:', state);
     
-    switch (peerConnection.connectionState) {
-      case 'connected':
-        isConnected = true;
-        updateStatus('Connected!', 'connected');
-        break;
-      case 'disconnected':
-      case 'failed':
-      case 'closed':
-        isConnected = false;
-        updateStatus('Disconnected', 'disconnected');
-        break;
-      case 'connecting':
-        updateStatus('Connecting...', 'connecting');
-        break;
+    if (state === 'connected') {
+      isConnected = true;
+      updateStatus('✓ Соединение установлено!', 'connected');
+      
+      // Определяем тип подключения
+      const stats = peerConnection.getStats();
+      let selectedType = 'STUN';
+      
+      stats.then(report => {
+        report.forEach(value => {
+          if (value.type === 'candidate-pair' && value.state === 'succeeded' && value.nominated) {
+            const remoteCandidate = report.get(value.remoteCandidateId);
+            if (remoteCandidate) {
+              if (remoteCandidate.address.includes('172.') || remoteCandidate.address.includes('10.') || remoteCandidate.address.includes('192.')) {
+                selectedType = 'P2P (локальная сеть)';
+              } else if (remoteCandidate.protocol === 'udp') {
+                selectedType = 'STUN (UDP)';
+              } else {
+                selectedType = 'STUN (TCP)';
+              }
+              updateConnectionType('Подключено через: ' + selectedType + ' • stun.cloudflare.com');
+            }
+          }
+        });
+      }).catch(() => {
+        updateConnectionType('Подключено через: STUN • stun.cloudflare.com');
+      });
+      
+    } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+      isConnected = false;
+      updateStatus('Соединение разорвано', 'disconnected');
+      updateConnectionType('Отключено');
+      enableCallControls(false);
+    } else if (state === 'connecting') {
+      updateStatus('Установление соединения...', 'connecting');
     }
   };
   
@@ -285,136 +178,190 @@ function createPeerConnection() {
   };
 }
 
-async function setRemoteSdp() {
-  // Эта функция больше не используется - всё автоматически
-  console.log('SDP handling is now automatic');
-}
-
-async function waitForIceGathering() {
-  return new Promise((resolve) => {
-    if (peerConnection.iceGatheringState === 'complete') {
-      resolve();
-    } else {
-      const checkState = () => {
-        if (peerConnection.iceGatheringState === 'complete') {
-          peerConnection.removeEventListener('icegatheringstatechange', checkState);
-          resolve();
-        }
-      };
-      peerConnection.addEventListener('icegatheringstatechange', checkState);
-      
-      // Timeout after 5 seconds
-      setTimeout(resolve, 5000);
-    }
-  });
-}
-
-async function sendSdpMessage(sdpData) {
-  const encrypted = CryptoJS.AES.encrypt(JSON.stringify(sdpData), currentSeed).toString();
+async function handleRemoteSdp(sdpData) {
+  // Игнорируем свои сообщения
+  if (sdpData.from === currentUser) return;
   
-  try {
-    const resp = await fetch(PROXY_URL + '?action=write', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: currentRoom, encrypted: encrypted })
-    });
+  console.log('Processing remote SDP:', sdpData.type);
+  
+  if (sdpData.type === 'offer' && !isInitiator && !hasSentSdp) {
+    // Мы - отвечающая сторона, получили OFFER
+    updateStatus('Входящий звонок от ' + sdpData.from + '...', 'connecting');
+    updateConnectionType('Получен Offer, подготовка Answer');
     
-    const result = await resp.json();
-    if (!result.success) throw new Error(result.error || 'Send failed');
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ 
+        video: true, 
+        audio: true 
+      });
+      
+      document.getElementById('localVideo').srcObject = localStream;
+      createPeerConnection();
+      
+      localStream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStream);
+      });
+      
+      // Устанавливаем remote offer
+      await peerConnection.setRemoteDescription(new RTCSessionDescription({
+        type: 'offer',
+        sdp: sdpData.sdp
+      }));
+      
+      // Создаём ANSWER
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      
+      await waitForIceGathering(3000);
+      
+      // Отправляем ANSWER
+      const answerData = {
+        type: 'answer',
+        sdp: peerConnection.localDescription.sdp,
+        from: currentUser,
+        timestamp: Date.now()
+      };
+      
+      await sendSdpMessage(answerData);
+      hasSentSdp = true;
+      isInitiator = false; // Мы отвечающая сторона
+      
+      updateStatus('Ответ отправлен! Соединение...', 'connecting');
+      updateConnectionType('Answer отправлен через GitHub Gist');
+      enableCallControls(true);
+      
+    } catch (err) {
+      console.error('Handle offer error:', err);
+      updateStatus('Ошибка при приеме звонка: ' + err.message, 'disconnected');
+    }
     
-  } catch (err) {
-    console.error('Send SDP error:', err);
-    throw err;
+  } else if (sdpData.type === 'answer' && isInitiator) {
+    // Мы - инициатор, получили ANSWER
+    updateStatus('Получен ответ! Соединение...', 'connecting');
+    updateConnectionType('Получен Answer, подключение');
+    
+    try {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription({
+        type: 'answer',
+        sdp: sdpData.sdp
+      }));
+    } catch (err) {
+      console.error('Set answer error:', err);
+    }
   }
 }
 
-async function loadRemoteSdpMessages(autoApply = true) {
+// ===== MONITORING =====
+function startMonitoring() {
+  if (pollInterval) clearInterval(pollInterval);
+  
+  pollInterval = setInterval(async () => {
+    if (isConnected) {
+      stopMonitoring();
+      return;
+    }
+    
+    await checkForNewSdp();
+  }, 2000);
+}
+
+function stopMonitoring() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+}
+
+async function checkForNewSdp() {
   try {
-    const url = PROXY_URL + '?action=read&file=' + encodeURIComponent(currentRoom) + '&t=' + Date.now();
+    const url = PROXY_URL + '?action=read&file=' + encodeURIComponent(currentRoom);
     const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
     
-    if (!response.ok) throw new Error('HTTP ' + response.status);
+    if (!response.ok) return;
     
     const data = await response.json();
     
-    if (data.messages && Array.isArray(data.messages)) {
-      // Получаем только новые сообщения (после lastSdpIndex)
-      for (let i = data.messages.length - 1; i > lastSdpIndex; i--) {
-        const msg = data.messages[i];
-        try {
-          const bytes = CryptoJS.AES.decrypt(msg.encrypted, currentSeed);
-          const decrypted = bytes.toString(CryptoJS.enc.Utf8);
-          const sdpData = JSON.parse(decrypted);
-          
-          if (sdpData.from !== currentUser) {
-            // Нашли сообщение от другого пользователя
-            lastSdpIndex = i;
-            
-            // Если это answer и мы caller - автоматически применяем
-            if (autoApply && isCaller && sdpData.type === 'answer') {
-              updateStatus('Received answer! Connecting...', 'connecting');
-              await peerConnection.setRemoteDescription(new RTCSessionDescription({
-                type: 'answer',
-                sdp: sdpData.sdp
-              }));
-            }
-            
-            pollRetryCount = 0; // Сбрасываем счётчик ошибок
-            return;
-          }
-        } catch (e) {
-          console.warn('Decrypt failed:', e);
-        }
-      }
-      
-      // Если новых сообщений нет, но есть старые - показываем это
-      if (data.messages.length > 0 && lastSdpIndex >= 0) {
-        updateStatus('Waiting for partner...', 'connecting');
-      }
-    }
+    if (!data.messages || !Array.isArray(data.messages)) return;
     
-    if (lastSdpIndex < 0) {
-      updateStatus('No messages yet', 'disconnected');
+    // Проверяем только новые сообщения
+    for (let i = data.messages.length - 1; i >= 0; i--) {
+      if (i <= lastProcessedIndex) break;
+      
+      const msg = data.messages[i];
+      if (!msg || !msg.encrypted) continue;
+      
+      try {
+        const bytes = CryptoJS.AES.decrypt(msg.encrypted, currentSeed);
+        const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+        const sdpData = JSON.parse(decrypted);
+        
+        lastProcessedIndex = i;
+        await handleRemoteSdp(sdpData);
+        
+      } catch (e) {
+        // Не расшифровалось - игнорируем
+      }
     }
     
   } catch (err) {
-    console.error('Load SDP error:', err);
-    pollRetryCount++;
-    if (pollRetryCount >= MAX_POLL_RETRIES) {
-      updateStatus('Connection error (retrying...)', 'disconnected');
-      pollRetryCount = 0;
-    }
+    console.error('Monitor error:', err);
   }
 }
 
-function pollForRemoteSdp() {
-  // Очищаем предыдущий интервал если есть
-  if (sdpPollInterval) {
-    clearInterval(sdpPollInterval);
-  }
+// ===== HELPERS =====
+async function sendSdpMessage(sdpData) {
+  const encrypted = CryptoJS.AES.encrypt(JSON.stringify(sdpData), currentSeed).toString();
   
-  let pollTimeout = setTimeout(() => {
-    if (sdpPollInterval) clearInterval(sdpPollInterval);
-  }, POLL_TIMEOUT_MS);
+  const resp = await fetch(PROXY_URL + '?action=write', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: currentRoom, encrypted: encrypted })
+  });
   
-  sdpPollInterval = setInterval(async () => {
-    if (!isConnected) {
-      await loadRemoteSdpMessages();
-    } else {
-      clearInterval(sdpPollInterval);
-      clearTimeout(pollTimeout);
-      sdpPollInterval = null;
+  const result = await resp.json();
+  if (!result.success) throw new Error(result.error || 'Send failed');
+}
+
+async function waitForIceGathering(timeout = 3000) {
+  return new Promise((resolve) => {
+    if (peerConnection.iceGatheringState === 'complete') {
+      resolve();
+      return;
     }
-  }, POLL_INTERVAL_MS);
+    
+    const checkState = () => {
+      if (peerConnection.iceGatheringState === 'complete') {
+        peerConnection.removeEventListener('icegatheringstatechange', checkState);
+        resolve();
+      }
+    };
+    
+    peerConnection.addEventListener('icegatheringstatechange', checkState);
+    setTimeout(resolve, timeout);
+  });
 }
 
-function displayLocalSdp(sdpText) {
-  // Больше не используется - всё автоматически
+function updateStatus(text, state) {
+  const statusBar = document.getElementById('status-bar');
+  statusBar.textContent = text;
+  statusBar.className = 'status-indicator status-' + state;
 }
 
-function copyLocalSdp() {
-  // Больше не используется - всё автоматически
-  alert('SDP exchange is now automatic!');
+function updateConnectionType(text) {
+  const connType = document.getElementById('connectionType');
+  if (connType) {
+    connType.textContent = 'Тип: ' + text;
+  }
+}
+
+function enableCallControls(enabled) {
+  const startBtn = document.getElementById('startCallBtn');
+  const endBtn = document.getElementById('endCallBtn');
+  const muteBtn = document.getElementById('muteBtn');
+  
+  if (startBtn) startBtn.disabled = enabled;
+  if (endBtn) endBtn.disabled = !enabled;
+  if (muteBtn) muteBtn.disabled = !enabled;
 }
 
 function toggleMute() {
@@ -429,11 +376,7 @@ function toggleMute() {
 }
 
 function endCall() {
-  // Останавливаем polling
-  if (sdpPollInterval) {
-    clearInterval(sdpPollInterval);
-    sdpPollInterval = null;
-  }
+  stopMonitoring();
   
   if (peerConnection) {
     peerConnection.close();
@@ -445,27 +388,15 @@ function endCall() {
     localStream = null;
   }
   
-  remoteStream = null;
   isConnected = false;
-  isCaller = false;
-  lastSdpIndex = -1;
-  pollRetryCount = 0;
+  isInitiator = false;
+  hasSentSdp = false;
+  lastProcessedIndex = -1;
   
   document.getElementById('localVideo').srcObject = null;
   document.getElementById('remoteVideo').srcObject = null;
   
-  updateStatus('Call ended', 'disconnected');
+  updateStatus('Звонок завершен', 'disconnected');
+  updateConnectionType('Ожидание...');
   enableCallControls(false);
-}
-
-function updateStatus(text, state) {
-  const statusBar = document.getElementById('status-bar');
-  statusBar.textContent = text;
-  statusBar.className = 'status-indicator status-' + state;
-}
-
-function enableCallControls(enabled) {
-  document.getElementById('startCallBtn').disabled = enabled;
-  document.getElementById('endCallBtn').disabled = !enabled;
-  document.getElementById('muteBtn').disabled = !enabled;
 }
