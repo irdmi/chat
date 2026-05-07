@@ -5,10 +5,53 @@ let currentUser = '';
 let currentSeed = '';
 let currentChatId = null;
 
+// Call module variables
+let callModule = null;
+let callUI = null;
+
 // ===== INIT =====
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   loadChatsFromStorage();
+  
+  // Initialize call module
+  const remoteVideo = document.getElementById('remote-video');
+  const localVideo = document.getElementById('local-video');
+  
+  if (remoteVideo && localVideo) {
+    // Import call modules dynamically
+    try {
+      const { CallModule } = await import('./call.js');
+      const { CallUI } = await import('./call-ui.js');
+      
+      callModule = new CallModule({ currentUser: '', currentSeed: '' }, PROXY_URL);
+      await callModule.init(remoteVideo, localVideo);
+      callUI = new CallUI(callModule);
+      callUI.bindControls();
+    } catch (e) {
+      // Silently ignore call module load errors
+    }
+  }
+  
+  // Call button handler
+  document.getElementById('call-btn')?.addEventListener('click', async () => {
+    if (!currentSeed) {
+      alert('Join a chat first');
+      return;
+    }
+    if (callModule) {
+      callModule.chat.currentUser = currentUser;
+      callModule.chat.currentSeed = currentSeed;
+      try {
+        const state = await callModule.startCall(true, false); // audio-only by default
+        if (state && callUI) {
+          callUI.show(currentUser);
+        }
+      } catch (err) {
+        // Silently ignore start call errors
+      }
+    }
+  });
 });
 
 function setupEventListeners() {
@@ -144,13 +187,19 @@ async function loadMessages() {
             msgDiv.appendChild(div);
           }
         } catch (e) {
-          console.warn('Decrypt failed:', e);
+          // Игнорируем ошибки расшифровки - это могут быть сообщения с другим ключом или сигналы WebRTC
+          // Silently ignore decryption errors
         }
       }
       msgDiv.scrollTop = msgDiv.scrollHeight;
     }
+    
+    // If call is active and in a real call state, load WebRTC signals from separate file
+    if (callModule && callModule.callState !== 'IDLE') {
+      await callModule.loadSignals();
+    }
   } catch (err) {
-    console.error('Load error:', err);
+    // Silently ignore load errors
     msgDiv.innerHTML = '<div class="msg-item" style="color:#f85">Load failed</div>';
   }
 }
@@ -166,18 +215,22 @@ async function sendMessage() {
   input.value = '';
   
   try {
-    const resp = await fetch(PROXY_URL + '?action=write', {
+    // Отправляем только зашифрованное сообщение, без поля file
+    // Воркер использует файл по умолчанию (chat) или из параметра URL
+    const resp = await fetch(PROXY_URL + '?action=write&file=' + encodeURIComponent(FILE_NAME), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: FILE_NAME, encrypted: encrypted })
+      body: JSON.stringify({ encrypted: encrypted })
     });
     
     const result = await resp.json();
-    if (!result.success) throw new Error(result.error || 'Unknown error');
+    if (!result.success && resp.status !== 200 && resp.status !== 201) {
+      throw new Error(result.error || 'HTTP ' + resp.status);
+    }
     
     loadMessages();
   } catch (err) {
-    console.error('Send error:', err);
+    // Silently ignore send errors
     alert('Send error: ' + err.message);
     input.value = text;
   }
