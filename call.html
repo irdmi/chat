@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebRTC Call</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js" defer></script>
+  <style>
+    #call-screen {
+      flex: 1;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    
+    .video-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px;
+      overflow: hidden;
+    }
+    
+    .video-wrapper {
+      position: relative;
+      background: var(--panel-bg);
+      border-radius: var(--radius);
+      overflow: hidden;
+      flex: 1;
+      min-height: 200px;
+    }
+    
+    .video-wrapper video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    
+    .video-label {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.6);
+      color: var(--text-color);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+    }
+    
+    .call-controls {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      padding: 16px;
+      background: var(--panel-bg);
+      border-top: 1px solid var(--border-color);
+      flex-shrink: 0;
+    }
+    
+    .call-btn {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: none;
+      font-size: 1.5rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.2s;
+    }
+    
+    .call-btn:hover { transform: scale(1.1); }
+    
+    .call-btn.start { background: var(--accent-color); color: white; }
+    .call-btn.end { background: #dc3545; color: white; }
+    .call-btn.mute { background: var(--panel-bg); color: var(--text-color); border: 1px solid var(--border-color); }
+    
+    #sdp-exchange {
+      padding: 16px;
+      background: var(--panel-bg);
+      border-top: 1px solid var(--border-color);
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+    
+    #sdp-exchange textarea {
+      width: 100%;
+      height: 100px;
+      background: var(--container-bg);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      color: var(--text-color);
+      font-family: monospace;
+      font-size: 0.8rem;
+      padding: 10px;
+      resize: none;
+    }
+    
+    #sdp-exchange button {
+      padding: 12px;
+      background: var(--accent-color);
+      color: white;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    
+    .status-indicator {
+      text-align: center;
+      padding: 8px;
+      background: var(--container-bg);
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+    
+    .status-connecting { color: #ffc107; }
+    .status-connected { color: var(--accent-color); }
+    .status-disconnected { color: var(--error-color); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <a href="index.html" class="icon-btn">←</a>
+      <h1>WebRTC Call</h1>
+      <button id="reload-sdp-btn" class="icon-btn small-btn" title="Refresh SDP">↻</button>
+    </header>
+  
+    <div id="login-screen">
+      <h2>Join Call</h2>
+      <input type="text" id="userName" placeholder="Your name">
+      <input type="password" id="seedPhrase" placeholder="Encryption seed (key)">
+      <button onclick="enterCall()">Join Call</button>
+      <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 10px;">
+        Use the same seed as your chat partner
+      </p>
+    </div>
+  
+    <div id="call-screen">
+      <div class="video-container">
+        <div class="video-wrapper">
+          <video id="remoteVideo" autoplay playsinline></video>
+          <div class="video-label">Remote</div>
+        </div>
+        <div class="video-wrapper" style="flex: 0 0 150px;">
+          <video id="localVideo" autoplay playsinline muted></video>
+          <div class="video-label">You</div>
+        </div>
+      </div>
+      
+      <div id="status-bar" class="status-indicator status-disconnected">
+        Disconnected
+      </div>
+      
+      <div id="sdp-exchange">
+        <div>
+          <label style="display:block; margin-bottom:6px; font-size:0.9rem;">Your Offer/Answer (send to partner):</label>
+          <textarea id="localSdp" readonly></textarea>
+          <button onclick="copyLocalSdp()" style="margin-top:8px; padding:8px; font-size:0.9rem;">Copy to Clipboard</button>
+        </div>
+        <div>
+          <label style="display:block; margin-bottom:6px; font-size:0.9rem;">Paste Partner's Answer/Offer:</label>
+          <textarea id="remoteSdpInput" placeholder="Paste SDP here..."></textarea>
+          <button onclick="setRemoteSdp()" style="margin-top:8px; padding:8px; font-size:0.9rem;">Set Remote SDP</button>
+        </div>
+      </div>
+      
+      <div class="call-controls">
+        <button id="muteBtn" class="call-btn mute" onclick="toggleMute()">🎤</button>
+        <button id="startCallBtn" class="call-btn start" onclick="startCall()">📞</button>
+        <button id="endCallBtn" class="call-btn end" onclick="endCall()" disabled>✕</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/call.js"></script>
+</body>
+</html>

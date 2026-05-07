@@ -1,0 +1,1 @@
+Nothing should be ignored in this case, as the added files (`call.html` and `js/call.js`) are source code files and do not fall under any of the categories that warrant being ignored (such as compiled files, dependencies, editor files, etc.). Therefore, the .gitignore file remains empty.
