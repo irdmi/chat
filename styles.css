@@ -189,6 +189,22 @@ body {
   flex-shrink: 0;
 }
 
+.call-btn-small {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.call-btn-small:hover { background: var(--border-color); }
+
 /* Sidebar */
 .sidebar {
   position: fixed;

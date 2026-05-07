@@ -135,16 +135,23 @@ async function loadMessages() {
     if (data.messages && Array.isArray(data.messages)) {
       for (const msg of data.messages) {
         try {
+          if (!msg.encrypted || typeof msg.encrypted !== 'string') continue;
+          
           const bytes = CryptoJS.AES.decrypt(msg.encrypted, currentSeed);
           const decrypted = bytes.toString(CryptoJS.enc.Utf8);
-          if (decrypted) {
-            const div = document.createElement('div');
-            div.className = 'msg-item';
-            div.textContent = decrypted;
-            msgDiv.appendChild(div);
+          
+          if (decrypted && decrypted.trim()) {
+            // Проверяем, что это действительно сообщение чата (содержит ': ')
+            if (decrypted.includes(': ')) {
+              const div = document.createElement('div');
+              div.className = 'msg-item';
+              div.textContent = decrypted;
+              msgDiv.appendChild(div);
+            }
           }
         } catch (e) {
-          console.warn('Decrypt failed:', e);
+          // Тихо игнорируем ошибки расшифровки (могут быть SDP или другие данные)
+          console.debug('Skip non-chat message:', e.message);
         }
       }
       msgDiv.scrollTop = msgDiv.scrollHeight;
@@ -182,3 +189,13 @@ async function sendMessage() {
     input.value = text;
   }
 }
+
+// ===== CALL INTEGRATION =====
+window.openCallScreen = function() {
+  // Переходим на страницу звонка с текущим seed
+  if (!currentSeed) {
+    alert('Please enter chat first!');
+    return;
+  }
+  window.location.href = 'call.html?seed=' + encodeURIComponent(currentSeed) + '&name=' + encodeURIComponent(currentUser);
+};
