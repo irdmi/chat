@@ -182,3 +182,9 @@ async function sendMessage() {
     input.value = text;
   }
 }
+
+// ===== CALL INTEGRATION =====
+function openCallScreen() {
+  // Переходим на страницу звонка с текущим seed
+  window.location.href = 'call.html?seed=' + encodeURIComponent(currentSeed) + '&name=' + encodeURIComponent(currentUser);
+}

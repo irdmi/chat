@@ -121,6 +121,15 @@
     .status-connecting { color: #ffc107; }
     .status-connected { color: var(--accent-color); }
     .status-disconnected { color: var(--error-color); }
+    
+    .room-info {
+      text-align: center;
+      padding: 8px;
+      background: var(--panel-bg);
+      border-bottom: 1px solid var(--border-color);
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
   </style>
 </head>
 <body>
@@ -133,15 +142,17 @@
   
     <div id="login-screen">
       <h2>Join Call</h2>
+      <input type="text" id="roomInput" placeholder="Room ID (chat seed)">
       <input type="text" id="userName" placeholder="Your name">
-      <input type="password" id="seedPhrase" placeholder="Encryption seed (key)">
       <button onclick="enterCall()">Join Call</button>
       <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 10px;">
-        Use the same seed as your chat partner
+        Use the same Room ID as your chat partner
       </p>
     </div>
   
     <div id="call-screen">
+      <div class="room-info" id="roomInfo"></div>
+      
       <div class="video-container">
         <div class="video-wrapper">
           <video id="remoteVideo" autoplay playsinline></video>
