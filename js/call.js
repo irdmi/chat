@@ -1,5 +1,6 @@
 /**
  * CallModule - WebRTC логика для Secure Chat
+ * Оптимизировано для минимизации запросов к API (batching ICE кандидатов)
  */
 export class CallModule {
   constructor(chatModule, proxyUrl) {
@@ -9,13 +10,15 @@ export class CallModule {
     this.localStream = null;
     this.remoteVideoEl = null;
     this.localVideoEl = null;
+    
     this.FILE_CALL = 'chat-calls';
     this.isRelay = false;
     this.callTimerInterval = null;
     this.isMuted = false;
     this.isVideoOff = false;
-    this.pendingCandidates = []; // Очередь для кандидатов
-    this.processingCandidates = false;
+    
+    // Флаг для контроля отправки ICE кандидатов
+    this.iceGatheringComplete = false;
   }
 
   async init(videoElRemote, videoElLocal) {
@@ -26,7 +29,7 @@ export class CallModule {
 
   async startCall(audio = true, video = false) {
     try {
-      console.log('[Call] Requesting media...', { audio, video });
+      console.log('[Call] Starting call...');
       this.localStream = await navigator.mediaDevices.getUserMedia({
         audio: audio,
         video: video ? { width: { ideal: 640 }, height: { ideal: 480 } } : false
@@ -40,23 +43,29 @@ export class CallModule {
 
       this.localStream.getTracks().forEach(track => {
         this.pc.addTrack(track, this.localStream);
-        console.log('[Call] Added track:', track.kind);
       });
 
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
-      console.log('[Call] Local description set, sending offer');
 
-      // Ждем немного, чтобы ICE начал собирать кандидатов, но отправляем Offer сразу
-      await this.sendSignal({ type: 'offer', sdp: this.pc.localDescription.sdp });
+      // Ждем завершения сбора ICE кандидатов перед отправкой Offer
+      // Это позволяет отправить всё одним пакетом
+      await this.waitForIceGathering();
+
+      console.log('[Call] Sending Offer with bundled ICE candidates');
+      await this.sendSignal({
+        type: 'offer',
+        sdp: this.pc.localDescription.sdp
+      });
 
       this.updateStatus('Calling...');
       this.startTimer();
       
       return 'OUTGOING';
+
     } catch (err) {
       console.error('[Call] Start failed:', err);
-      alert('Ошибка доступа к медиа: ' + err.message);
+      alert('Не удалось получить доступ к камере/микрофону: ' + err.message);
       this.hangup();
       return 'ERROR';
     }
@@ -67,48 +76,66 @@ export class CallModule {
       iceServers: [
         { urls: 'stun:stun.cloudflare.com:3478' },
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
-      ],
-      iceCandidatePoolSize: 10
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
     };
 
     this.pc = new RTCPeerConnection(config);
 
     this.pc.ontrack = (event) => {
-      console.log('[Call] Remote track received:', event.track.kind);
+      console.log('[Call] Remote track received');
       if (this.remoteVideoEl && event.streams && event.streams[0]) {
         this.remoteVideoEl.srcObject = event.streams[0];
-        this.remoteVideoEl.play().catch(e => console.warn('Autoplay blocked:', e));
+        this.remoteVideoEl.play().catch(e => console.warn('Auto-play prevented:', e));
       }
     };
 
+    // Обработка ICE: больше не отправляем каждый кандидат отдельно!
+    // Мы ждем окончания сбора в startCall/handleSignal
     this.pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log('[Call] ICE candidate generated');
-        this.sendSignal({ type: 'ice', candidate: event.candidate });
-      } else {
+      if (event.candidate === null) {
+        this.iceGatheringComplete = true;
         console.log('[Call] ICE gathering complete');
       }
     };
 
     this.pc.oniceconnectionstatechange = () => {
-      const state = this.pc.iceConnectionState;
-      console.log('[Call] ICE State:', state);
+      console.log('[Call] ICE State:', this.pc.iceConnectionState);
       
-      if (state === 'connected') {
+      if (this.pc.iceConnectionState === 'connected') {
         this.updateStatus('Connected');
         this.checkRelayStatus();
-      } else if (state === 'failed') {
+      } else if (this.pc.iceConnectionState === 'failed') {
         this.updateStatus('Connection failed');
-        // Пытаемся перезапустить ICE
-        setTimeout(() => this.pc.restartIce(), 1000);
-      } else if (state === 'disconnected') {
+        this.pc.restartIce();
+      } else if (this.pc.iceConnectionState === 'disconnected') {
         this.updateStatus('Disconnected');
-      } else {
-        this.updateStatus(state);
       }
     };
+  }
+
+  // Вспомогательная функция для ожидания сбора ICE
+  waitForIceGathering() {
+    return new Promise((resolve) => {
+      if (this.pc.iceGatheringState === 'complete') {
+        resolve();
+      } else {
+        const checkState = () => {
+          if (this.pc.iceGatheringState === 'complete') {
+            this.pc.removeEventListener('icegatheringstatechange', checkState);
+            resolve();
+          }
+        };
+        this.pc.addEventListener('icegatheringstatechange', checkState);
+        
+        // Таймаут на случай, если событие не сработает (10 сек)
+        setTimeout(() => {
+          this.pc.removeEventListener('icegatheringstatechange', checkState);
+          console.warn('[Call] ICE gathering timeout, proceeding anyway');
+          resolve();
+        }, 10000);
+      }
+    });
   }
 
   async handleSignal(data) {
@@ -116,56 +143,44 @@ export class CallModule {
 
     try {
       if (data.type === 'offer') {
-        console.log('[Call] Processing Offer');
+        console.log('[Call] Received Offer, creating Answer...');
         await this.pc.setRemoteDescription(new RTCSessionDescription(data));
         
         const answer = await this.pc.createAnswer();
         await this.pc.setLocalDescription(answer);
         
-        await this.sendSignal({ type: 'answer', sdp: this.pc.localDescription.sdp });
+        // Ждем сбора ICE кандидатов для ответа
+        await this.waitForIceGathering();
+        
+        console.log('[Call] Sending Answer with bundled ICE candidates');
+        await this.sendSignal({
+          type: 'answer',
+          sdp: this.pc.localDescription.sdp
+        });
+        
         this.updateStatus('Connecting...');
         this.startTimer();
-        
-        // Обрабатываем накопленные кандидаты после установки remoteDescription
-        await this.processPendingCandidates();
 
       } else if (data.type === 'answer') {
-        console.log('[Call] Processing Answer');
+        console.log('[Call] Received Answer');
         await this.pc.setRemoteDescription(new RTCSessionDescription(data));
-        await this.processPendingCandidates();
 
       } else if (data.type === 'ice') {
-        console.log('[Call] Received ICE candidate');
+        // Обработка отдельных кандидатов (на всякий случай, если придут)
         const candidate = new RTCIceCandidate(data.candidate);
-        
-        if (this.pc.remoteDescription) {
-          await this.pc.addIceCandidate(candidate);
+        if (!this.pc.remoteDescription) {
+           console.warn('[Call] Received ICE before remote description, queuing...');
+           // В простой реализации просто игнорируем или пробуем добавить позже
         } else {
-          this.pendingCandidates.push(candidate);
-          console.log('[Call] Candidate queued (no remote desc yet)');
+          await this.pc.addIceCandidate(candidate).catch(e => console.warn('Add ICE failed', e));
         }
       }
     } catch (err) {
-      console.error('[Call] Signal error:', err);
-      if (!err.message.includes('Duplicate') && !err.message.includes('conflict')) {
+      console.error('[Call] Signal handling error:', err);
+      if (!err.message.includes('Duplicate')) {
         throw err;
       }
     }
-  }
-
-  async processPendingCandidates() {
-    if (this.processingCandidates) return;
-    this.processingCandidates = true;
-
-    while (this.pendingCandidates.length > 0) {
-      const candidate = this.pendingCandidates.shift();
-      try {
-        await this.pc.addIceCandidate(candidate);
-      } catch (e) {
-        console.warn('[Call] Failed to add queued candidate:', e);
-      }
-    }
-    this.processingCandidates = false;
   }
 
   async sendSignal(payload) {
@@ -178,6 +193,7 @@ export class CallModule {
       const msg = JSON.stringify(payload);
       const encrypted = CryptoJS.AES.encrypt(msg, this.chat.currentSeed).toString();
 
+      // ОДИН запрос на весь сигнал (Offer/Answer) вместо десятков на кандидатов
       const response = await fetch(`${this.proxyUrl}?action=write&file=${this.FILE_CALL}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -186,12 +202,15 @@ export class CallModule {
 
       if (!response.ok) {
         const text = await response.text();
-        console.error('[Call] Send error:', response.status, text);
-        throw new Error(`Send failed: ${response.status}`);
+        // Логируем ошибку, но не выбрасываем исключение сразу, чтобы не ломать поток
+        console.error(`[Call] Send failed: ${response.status}`, text);
+        throw new Error(`Server error: ${response.status}`);
       }
+      
+      console.log('[Call] Signal sent successfully:', payload.type);
     } catch (err) {
       console.error('[Call] Send signal failed:', err);
-      // Не прерываем выполнение, чтобы не ломать звонок полностью
+      throw err;
     }
   }
 
@@ -208,12 +227,10 @@ export class CallModule {
       for (const item of data.messages) {
         try {
           const bytes = CryptoJS.AES.decrypt(item.encrypted, this.chat.currentSeed);
-          const decryptedStr = bytes.toString(CryptoJS.enc.Utf8);
-          if (!decryptedStr) continue;
+          const decryptedData = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
 
-          const decryptedData = JSON.parse(decryptedStr);
-          if (decryptedData.type === 'offer' || decryptedData.type === 'answer' || decryptedData.type === 'ice') {
-            await this.handleSignal(decryptedData);
+          if (decryptedData && (decryptedData.type === 'offer' || decryptedData.type === 'answer' || decryptedData.type === 'ice')) {
+             await this.handleSignal(decryptedData);
           }
         } catch (e) {
           // Игнорируем ошибки расшифровки чужих сообщений
@@ -226,27 +243,28 @@ export class CallModule {
 
   checkRelayStatus() {
     if (!this.pc) return;
+    
     const sender = this.pc.getSenders()[0];
     if (sender && sender.transport && sender.transport.iceTransport) {
       const pair = sender.transport.iceTransport.getSelectedCandidatePair();
       if (pair && pair.remote) {
         this.isRelay = (pair.remote.type === 'relay');
+        
         const badge = document.getElementById('call-type');
         if (badge) {
           badge.textContent = this.isRelay ? '🟡 Relay' : '🟢 Direct';
           badge.className = 'badge ' + (this.isRelay ? 'relay' : 'direct');
         }
-        console.log('[Call] Connection type:', this.isRelay ? 'RELAY (TURN needed)' : 'DIRECT (P2P)');
-        
-        if (this.isRelay) {
-           console.warn('[Call] Using Relay. Without a TURN server, media may not flow through strict NATs.');
-        }
+        console.log('[Call] Connection type:', this.isRelay ? 'RELAY' : 'DIRECT');
       }
     }
   }
 
   hangup() {
-    if (this.pc) { this.pc.close(); this.pc = null; }
+    if (this.pc) {
+      this.pc.close();
+      this.pc = null;
+    }
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => track.stop());
       this.localStream = null;
@@ -256,7 +274,9 @@ export class CallModule {
     
     this.stopTimer();
     this.updateStatus('Call ended');
-    document.getElementById('call-overlay')?.classList.add('hidden');
+    
+    const overlay = document.getElementById('call-overlay');
+    if (overlay) overlay.classList.add('hidden');
   }
 
   toggleMute() {
@@ -265,6 +285,7 @@ export class CallModule {
     if (audioTrack) {
       this.isMuted = !audioTrack.enabled;
       audioTrack.enabled = !this.isMuted;
+      
       const btn = document.getElementById('btn-mute');
       if (btn) btn.textContent = this.isMuted ? '🎤' : '🔇';
     }
@@ -276,6 +297,7 @@ export class CallModule {
     if (videoTrack) {
       this.isVideoOff = !videoTrack.enabled;
       videoTrack.enabled = !this.isVideoOff;
+      
       const btn = document.getElementById('btn-video');
       if (btn) btn.textContent = this.isVideoOff ? '📹' : '🚫📹';
     }
@@ -291,6 +313,7 @@ export class CallModule {
     let seconds = 0;
     const el = document.getElementById('call-timer');
     if (!el) return;
+
     this.callTimerInterval = setInterval(() => {
       seconds++;
       const m = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -300,6 +323,9 @@ export class CallModule {
   }
 
   stopTimer() {
-    if (this.callTimerInterval) clearInterval(this.callTimerInterval);
+    if (this.callTimerInterval) {
+      clearInterval(this.callTimerInterval);
+      this.callTimerInterval = null;
+    }
   }
 }
