@@ -302,7 +302,7 @@ async function sendSdpMessage(sdpData) {
   }
 }
 
-async function loadRemoteSdpMessages() {
+async function loadRemoteSdpMessages(autoApply = true) {
   try {
     const url = PROXY_URL + '?action=read&file=' + encodeURIComponent(currentRoom) + '&t=' + Date.now();
     const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
@@ -323,8 +323,18 @@ async function loadRemoteSdpMessages() {
           if (sdpData.from !== currentUser) {
             // Нашли сообщение от другого пользователя
             lastSdpIndex = i;
-            document.getElementById('remoteSdpInput').value = msg.encrypted;
-            updateStatus('Received ' + sdpData.type + ' from ' + sdpData.from, 'connecting');
+            
+            if (autoApply) {
+              // Автоматически применяем SDP
+              document.getElementById('remoteSdpInput').value = msg.encrypted;
+              updateStatus('Received ' + sdpData.type + ' from ' + sdpData.from + ' (auto-applying...)', 'connecting');
+              setTimeout(() => setRemoteSdp(), 100);
+            } else {
+              // Только показываем
+              document.getElementById('remoteSdpInput').value = msg.encrypted;
+              updateStatus('Received ' + sdpData.type + ' from ' + sdpData.from, 'connecting');
+            }
+            
             pollRetryCount = 0; // Сбрасываем счётчик ошибок
             return;
           }
