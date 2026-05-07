@@ -168,19 +168,6 @@
         Disconnected
       </div>
       
-      <div id="sdp-exchange">
-        <div>
-          <label style="display:block; margin-bottom:6px; font-size:0.9rem;">Your Offer/Answer (send to partner):</label>
-          <textarea id="localSdp" readonly></textarea>
-          <button onclick="copyLocalSdp()" style="margin-top:8px; padding:8px; font-size:0.9rem;">Copy to Clipboard</button>
-        </div>
-        <div>
-          <label style="display:block; margin-bottom:6px; font-size:0.9rem;">Paste Partner's Answer/Offer:</label>
-          <textarea id="remoteSdpInput" placeholder="Paste SDP here..."></textarea>
-          <button onclick="setRemoteSdp()" style="margin-top:8px; padding:8px; font-size:0.9rem;">Set Remote SDP</button>
-        </div>
-      </div>
-      
       <div class="call-controls">
         <button id="muteBtn" class="call-btn mute" onclick="toggleMute()">🎤</button>
         <button id="startCallBtn" class="call-btn start" onclick="startCall()">📞</button>

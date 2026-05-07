@@ -60,10 +60,12 @@ function enterCall() {
   roomInput.value = '';
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('call-screen').style.display = 'flex';
-  document.getElementById('sdp-exchange').style.display = 'flex';
   document.getElementById('roomInfo').textContent = 'Room: ' + currentRoom;
   
-  updateStatus('Ready to start call', 'disconnected');
+  updateStatus('Listening for incoming calls...', 'disconnected');
+  
+  // Запускаем прослушивание входящих звонков сразу при входе
+  startIncomingCallListener();
 }
 
 async function startCall() {
@@ -71,6 +73,9 @@ async function startCall() {
     endCall();
     return;
   }
+  
+  // Останавливаем прослушивание входящих, так как мы инициируем звонок
+  stopIncomingCallListener();
   
   try {
     // Get local media
@@ -106,7 +111,6 @@ async function startCall() {
     
     await sendSdpMessage(sdpData);
     
-    displayLocalSdp(JSON.stringify(sdpData));
     updateStatus('Offer sent! Waiting for answer...', 'connecting');
     
     isCaller = true;
@@ -144,6 +148,101 @@ async function receiveCall() {
     console.error('Receive call error:', err);
     alert('Failed to receive call: ' + err.message);
   }
+}
+
+// ===== AUTOMATIC CALL HANDLING =====
+let incomingCallListener = null;
+
+function startIncomingCallListener() {
+  // Запускаем прослушивание входящих звонков
+  if (incomingCallListener) {
+    clearInterval(incomingCallListener);
+  }
+  
+  updateStatus('Waiting for incoming call...', 'disconnected');
+  
+  incomingCallListener = setInterval(async () => {
+    if (!isConnected && !isCaller) {
+      await checkForIncomingCall();
+    }
+  }, POLL_INTERVAL_MS);
+}
+
+function stopIncomingCallListener() {
+  if (incomingCallListener) {
+    clearInterval(incomingCallListener);
+    incomingCallListener = null;
+  }
+}
+
+async function checkForIncomingCall() {
+  try {
+    const url = PROXY_URL + '?action=read&file=' + encodeURIComponent(currentRoom) + '&t=' + Date.now();
+    const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    
+    if (!response.ok) return;
+    
+    const data = await response.json();
+    
+    if (data.messages && Array.isArray(data.messages)) {
+      // Проверяем только последнее сообщение
+      const lastMsg = data.messages[data.messages.length - 1];
+      if (!lastMsg || !lastMsg.encrypted) return;
+      
+      try {
+        const bytes = CryptoJS.AES.decrypt(lastMsg.encrypted, currentSeed);
+        const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+        const sdpData = JSON.parse(decrypted);
+        
+        // Если это offer и не от нас - автоматически принимаем звонок
+        if (sdpData.type === 'offer' && sdpData.from !== currentUser) {
+          // Останавливаем прослушивание
+          stopIncomingCallListener();
+          
+          updateStatus('Incoming call from ' + sdpData.from + '! Connecting...', 'connecting');
+          
+          // Автоматически применяем offer и отправляем answer
+          await handleIncomingOffer(sdpData);
+        }
+      } catch (e) {
+        // Не удалось расшифровать, игнорируем
+      }
+    }
+  } catch (err) {
+    console.error('Check incoming call error:', err);
+  }
+}
+
+async function handleIncomingOffer(offerData) {
+  if (!peerConnection) {
+    await receiveCall();
+  }
+  
+  // Устанавливаем remote description (offer)
+  await peerConnection.setRemoteDescription(new RTCSessionDescription({
+    type: 'offer',
+    sdp: offerData.sdp
+  }));
+  
+  // Создаём answer
+  const answer = await peerConnection.createAnswer();
+  await peerConnection.setLocalDescription(answer);
+  
+  await waitForIceGathering();
+  
+  const answerData = {
+    type: 'answer',
+    sdp: peerConnection.localDescription.sdp,
+    from: currentUser,
+    timestamp: Date.now()
+  };
+  
+  await sendSdpMessage(answerData);
+  
+  updateStatus('Answer sent! Connecting...', 'connecting');
+  
+  // Продолжаем polling для получения ICE кандидатов и завершения соединения
+  pollForRemoteSdp();
 }
 
 function createPeerConnection() {
@@ -187,81 +286,8 @@ function createPeerConnection() {
 }
 
 async function setRemoteSdp() {
-  const input = document.getElementById('remoteSdpInput');
-  const sdpText = input.value.trim();
-  
-  if (!sdpText) {
-    alert('Paste SDP first!');
-    return;
-  }
-  
-  try {
-    const sdpData = JSON.parse(sdpText);
-    
-    // Decrypt if it's encrypted
-    let decryptedData;
-    try {
-      const bytes = CryptoJS.AES.decrypt(sdpData.encrypted, currentSeed);
-      const decrypted = bytes.toString(CryptoJS.enc.Utf8);
-      decryptedData = JSON.parse(decrypted);
-    } catch (e) {
-      // Not encrypted or wrong seed, use as-is
-      decryptedData = sdpData;
-    }
-    
-    if (!peerConnection) {
-      createPeerConnection();
-      
-      // Add local tracks if we haven't already
-      if (localStream) {
-        localStream.getTracks().forEach(track => {
-          peerConnection.addTrack(track, localStream);
-        });
-      } else {
-        // Need to get media first
-        await receiveCall();
-      }
-    }
-    
-    if (decryptedData.type === 'offer') {
-      await peerConnection.setRemoteDescription(new RTCSessionDescription({
-        type: 'offer',
-        sdp: decryptedData.sdp
-      }));
-      
-      // Create answer
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      
-      await waitForIceGathering();
-      
-      const answerData = {
-        type: 'answer',
-        sdp: peerConnection.localDescription.sdp,
-        from: currentUser,
-        timestamp: Date.now()
-      };
-      
-      await sendSdpMessage(answerData);
-      displayLocalSdp(JSON.stringify(answerData));
-      
-      updateStatus('Answer sent! Waiting for connection...', 'connecting');
-      
-    } else if (decryptedData.type === 'answer') {
-      await peerConnection.setRemoteDescription(new RTCSessionDescription({
-        type: 'answer',
-        sdp: decryptedData.sdp
-      }));
-      
-      updateStatus('Connected!', 'connected');
-    }
-    
-    input.value = '';
-    
-  } catch (err) {
-    console.error('Set remote SDP error:', err);
-    alert('Invalid SDP: ' + err.message);
-  }
+  // Эта функция больше не используется - всё автоматически
+  console.log('SDP handling is now automatic');
 }
 
 async function waitForIceGathering() {
@@ -324,15 +350,13 @@ async function loadRemoteSdpMessages(autoApply = true) {
             // Нашли сообщение от другого пользователя
             lastSdpIndex = i;
             
-            if (autoApply) {
-              // Автоматически применяем SDP
-              document.getElementById('remoteSdpInput').value = msg.encrypted;
-              updateStatus('Received ' + sdpData.type + ' from ' + sdpData.from + ' (auto-applying...)', 'connecting');
-              setTimeout(() => setRemoteSdp(), 100);
-            } else {
-              // Только показываем
-              document.getElementById('remoteSdpInput').value = msg.encrypted;
-              updateStatus('Received ' + sdpData.type + ' from ' + sdpData.from, 'connecting');
+            // Если это answer и мы caller - автоматически применяем
+            if (autoApply && isCaller && sdpData.type === 'answer') {
+              updateStatus('Received answer! Connecting...', 'connecting');
+              await peerConnection.setRemoteDescription(new RTCSessionDescription({
+                type: 'answer',
+                sdp: sdpData.sdp
+              }));
             }
             
             pollRetryCount = 0; // Сбрасываем счётчик ошибок
@@ -385,14 +409,12 @@ function pollForRemoteSdp() {
 }
 
 function displayLocalSdp(sdpText) {
-  document.getElementById('localSdp').value = sdpText;
+  // Больше не используется - всё автоматически
 }
 
 function copyLocalSdp() {
-  const textarea = document.getElementById('localSdp');
-  textarea.select();
-  document.execCommand('copy');
-  alert('Copied to clipboard!');
+  // Больше не используется - всё автоматически
+  alert('SDP exchange is now automatic!');
 }
 
 function toggleMute() {
