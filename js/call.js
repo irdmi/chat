@@ -1,194 +1,173 @@
 /**
  * CallModule - WebRTC логика для Secure Chat
- * Обрабатывает создание соединения, обмен сигналами и управление медиа.
  */
 export class CallModule {
   constructor(chatModule, proxyUrl) {
-    this.chat = chatModule;        // Объект чата (нужен currentSeed)
-    this.proxyUrl = proxyUrl;      // URL Cloudflare Worker
-    this.pc = null;                // RTCPeerConnection
-    this.localStream = null;       // Локальный MediaStream
-    this.remoteVideoEl = null;     // Ссылка на DOM элемент удаленного видео
-    this.localVideoEl = null;      // Ссылка на DOM элемент локального видео
-    
-    this.FILE_CALL = 'chat-calls'; // Имя файла в Gist для сигналов
-    this.isRelay = false;          // Флаг использования TURN
-    this.callTimerInterval = null; // Таймер длительности звонка
+    this.chat = chatModule;
+    this.proxyUrl = proxyUrl;
+    this.pc = null;
+    this.localStream = null;
+    this.remoteVideoEl = null;
+    this.localVideoEl = null;
+    this.FILE_CALL = 'chat-calls';
+    this.isRelay = false;
+    this.callTimerInterval = null;
     this.isMuted = false;
     this.isVideoOff = false;
-    
-    // Очередь кандидатов, если remoteDescription еще не установлен
-    this.pendingCandidates = [];
+    this.pendingCandidates = []; // Очередь для кандидатов
+    this.processingCandidates = false;
   }
 
-  /**
-   * Инициализация: сохранение ссылок на DOM элементы
-   */
   async init(videoElRemote, videoElLocal) {
     this.remoteVideoEl = videoElRemote;
     this.localVideoEl = videoElLocal;
     console.log('[Call] UI initialized');
   }
 
-  /**
-   * Старт звонка (инициатор)
-   * @param {boolean} audio - Запрашивать ли аудио
-   * @param {boolean} video - Запрашивать ли видео
-   */
   async startCall(audio = true, video = false) {
     try {
-      // 1. Получаем доступ к медиаустройствам
+      console.log('[Call] Requesting media...', { audio, video });
       this.localStream = await navigator.mediaDevices.getUserMedia({
         audio: audio,
         video: video ? { width: { ideal: 640 }, height: { ideal: 480 } } : false
       });
 
-      // Отображаем локальное видео
       if (this.localVideoEl) {
         this.localVideoEl.srcObject = this.localStream;
       }
 
-      // 2. Создаем PeerConnection с приоритетом STUN Cloudflare
       this.createPeerConnection();
 
-      // 3. Добавляем треки в соединение
       this.localStream.getTracks().forEach(track => {
         this.pc.addTrack(track, this.localStream);
+        console.log('[Call] Added track:', track.kind);
       });
 
-      // 4. Создаем Offer
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
+      console.log('[Call] Local description set, sending offer');
 
-      // Ждем, пока ICE соберет кандидатов (или отправляем сразу с trickle)
-      // Для простоты отправляем offer сразу, кандидаты дошлются отдельно
-      await this.sendSignal({
-        type: 'offer',
-        sdp: this.pc.localDescription.sdp
-      });
+      // Ждем немного, чтобы ICE начал собирать кандидатов, но отправляем Offer сразу
+      await this.sendSignal({ type: 'offer', sdp: this.pc.localDescription.sdp });
 
       this.updateStatus('Calling...');
       this.startTimer();
       
       return 'OUTGOING';
-
     } catch (err) {
       console.error('[Call] Start failed:', err);
-      alert('Не удалось получить доступ к камере/микрофону: ' + err.message);
+      alert('Ошибка доступа к медиа: ' + err.message);
       this.hangup();
       return 'ERROR';
     }
   }
 
-  /**
-   * Создание RTCPeerConnection
-   */
   createPeerConnection() {
     const config = {
       iceServers: [
-        // ПРИОРИТЕТ 1: Cloudflare STUN
         { urls: 'stun:stun.cloudflare.com:3478' },
-        // ПРИОРИТЕТ 2: Google STUN
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-      ]
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
+      ],
+      iceCandidatePoolSize: 10
     };
 
     this.pc = new RTCPeerConnection(config);
 
-    // Обработка входящего потока (удаленное видео/аудио)
     this.pc.ontrack = (event) => {
-      console.log('[Call] Remote track received');
+      console.log('[Call] Remote track received:', event.track.kind);
       if (this.remoteVideoEl && event.streams && event.streams[0]) {
         this.remoteVideoEl.srcObject = event.streams[0];
-        // Пытаемся автовоспроизведение
-        this.remoteVideoEl.play().catch(e => console.warn('Auto-play prevented:', e));
+        this.remoteVideoEl.play().catch(e => console.warn('Autoplay blocked:', e));
       }
     };
 
-    // Обработка ICE кандидатов
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
-        this.sendSignal({
-          type: 'ice',
-          candidate: event.candidate
-        });
+        console.log('[Call] ICE candidate generated');
+        this.sendSignal({ type: 'ice', candidate: event.candidate });
+      } else {
+        console.log('[Call] ICE gathering complete');
       }
     };
 
-    // Отслеживание состояния соединения
     this.pc.oniceconnectionstatechange = () => {
-      console.log('[Call] ICE State:', this.pc.iceConnectionState);
+      const state = this.pc.iceConnectionState;
+      console.log('[Call] ICE State:', state);
       
-      if (this.pc.iceConnectionState === 'connected') {
+      if (state === 'connected') {
         this.updateStatus('Connected');
         this.checkRelayStatus();
-      } else if (this.pc.iceConnectionState === 'failed') {
+      } else if (state === 'failed') {
         this.updateStatus('Connection failed');
-        // Попытка рестарта ICE
-        this.pc.restartIce();
-      } else if (this.pc.iceConnectionState === 'disconnected') {
+        // Пытаемся перезапустить ICE
+        setTimeout(() => this.pc.restartIce(), 1000);
+      } else if (state === 'disconnected') {
         this.updateStatus('Disconnected');
+      } else {
+        this.updateStatus(state);
       }
-    };
-    
-    // Обработка состояния signaling (для отладки)
-    this.pc.onsignalingstatechange = () => {
-        console.log('[Call] Signaling State:', this.pc.signalingState);
     };
   }
 
-  /**
-   * Обработка входящих сигналов (Offer, Answer, ICE)
-   */
   async handleSignal(data) {
     if (!this.pc) this.createPeerConnection();
 
     try {
       if (data.type === 'offer') {
-        // Если получили Offer, значит мы принимающая сторона
+        console.log('[Call] Processing Offer');
         await this.pc.setRemoteDescription(new RTCSessionDescription(data));
         
-        // Создаем ответ
         const answer = await this.pc.createAnswer();
         await this.pc.setLocalDescription(answer);
         
-        // Отправляем Answer обратно
-        await this.sendSignal({
-          type: 'answer',
-          sdp: this.pc.localDescription.sdp
-        });
-        
+        await this.sendSignal({ type: 'answer', sdp: this.pc.localDescription.sdp });
         this.updateStatus('Connecting...');
         this.startTimer();
+        
+        // Обрабатываем накопленные кандидаты после установки remoteDescription
+        await this.processPendingCandidates();
 
       } else if (data.type === 'answer') {
-        // Если получили Answer, значит мы инициирующая сторона
+        console.log('[Call] Processing Answer');
         await this.pc.setRemoteDescription(new RTCSessionDescription(data));
+        await this.processPendingCandidates();
 
       } else if (data.type === 'ice') {
+        console.log('[Call] Received ICE candidate');
         const candidate = new RTCIceCandidate(data.candidate);
         
-        // Если remoteDescription еще не установлен, сохраняем кандидата в очередь
-        if (!this.pc.remoteDescription) {
-          this.pendingCandidates.push(candidate);
-          console.log('[Call] Queued ICE candidate (no remote desc yet)');
-        } else {
+        if (this.pc.remoteDescription) {
           await this.pc.addIceCandidate(candidate);
+        } else {
+          this.pendingCandidates.push(candidate);
+          console.log('[Call] Candidate queued (no remote desc yet)');
         }
       }
     } catch (err) {
-      console.error('[Call] Signal handling error:', err);
-      // Игнорируем ошибки дубликатов кандидатов
-      if (!err.message.includes('Duplicate')) {
+      console.error('[Call] Signal error:', err);
+      if (!err.message.includes('Duplicate') && !err.message.includes('conflict')) {
         throw err;
       }
     }
   }
 
-  /**
-   * Отправка сигнала через Worker
-   */
+  async processPendingCandidates() {
+    if (this.processingCandidates) return;
+    this.processingCandidates = true;
+
+    while (this.pendingCandidates.length > 0) {
+      const candidate = this.pendingCandidates.shift();
+      try {
+        await this.pc.addIceCandidate(candidate);
+      } catch (e) {
+        console.warn('[Call] Failed to add queued candidate:', e);
+      }
+    }
+    this.processingCandidates = false;
+  }
+
   async sendSignal(payload) {
     if (!this.chat.currentSeed) {
       console.error('[Call] No seed for encryption');
@@ -197,7 +176,6 @@ export class CallModule {
 
     try {
       const msg = JSON.stringify(payload);
-      // Шифрование сообщения текущим ключом сессии
       const encrypted = CryptoJS.AES.encrypt(msg, this.chat.currentSeed).toString();
 
       const response = await fetch(`${this.proxyUrl}?action=write&file=${this.FILE_CALL}`, {
@@ -208,19 +186,15 @@ export class CallModule {
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Server error: ${response.status} ${text}`);
+        console.error('[Call] Send error:', response.status, text);
+        throw new Error(`Send failed: ${response.status}`);
       }
-      
-      // console.log('[Call] Signal sent:', payload.type);
     } catch (err) {
       console.error('[Call] Send signal failed:', err);
-      // Не прерываем выполнение, пробуем отправить следующие кандидаты
+      // Не прерываем выполнение, чтобы не ломать звонок полностью
     }
   }
 
-  /**
-   * Загрузка сигналов из Gist (Polling)
-   */
   async loadSignals() {
     if (!this.chat.currentSeed) return;
 
@@ -231,57 +205,48 @@ export class CallModule {
       const data = await response.json();
       if (!data.messages) return;
 
-      // Проходим по всем сообщениям
       for (const item of data.messages) {
         try {
           const bytes = CryptoJS.AES.decrypt(item.encrypted, this.chat.currentSeed);
-          const decryptedData = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
+          const decryptedStr = bytes.toString(CryptoJS.enc.Utf8);
+          if (!decryptedStr) continue;
 
-          // Фильтруем только WebRTC сигналы
-          if (decryptedData && (decryptedData.type === 'offer' || decryptedData.type === 'answer' || decryptedData.type === 'ice')) {
-             // Простая защита от повторной обработки своих же сообщений можно добавить по ID, 
-             // но для MVP полагаемся на логику WebRTC (дубликаты он съест или игнор)
-             await this.handleSignal(decryptedData);
+          const decryptedData = JSON.parse(decryptedStr);
+          if (decryptedData.type === 'offer' || decryptedData.type === 'answer' || decryptedData.type === 'ice') {
+            await this.handleSignal(decryptedData);
           }
         } catch (e) {
-          // Ошибка расшифровки конкретного сообщения (не наш ключ или мусор) - игнорируем
+          // Игнорируем ошибки расшифровки чужих сообщений
         }
       }
     } catch (err) {
-      // Ошибка сети - игнорируем до следующего поллинга
+      // Игнорируем ошибки сети
     }
   }
 
-  /**
-   * Проверка типа соединения (Direct P2P или Relay)
-   */
   checkRelayStatus() {
     if (!this.pc) return;
-    
     const sender = this.pc.getSenders()[0];
     if (sender && sender.transport && sender.transport.iceTransport) {
       const pair = sender.transport.iceTransport.getSelectedCandidatePair();
       if (pair && pair.remote) {
         this.isRelay = (pair.remote.type === 'relay');
-        
         const badge = document.getElementById('call-type');
         if (badge) {
           badge.textContent = this.isRelay ? '🟡 Relay' : '🟢 Direct';
           badge.className = 'badge ' + (this.isRelay ? 'relay' : 'direct');
         }
-        console.log('[Call] Connection type:', this.isRelay ? 'RELAY' : 'DIRECT');
+        console.log('[Call] Connection type:', this.isRelay ? 'RELAY (TURN needed)' : 'DIRECT (P2P)');
+        
+        if (this.isRelay) {
+           console.warn('[Call] Using Relay. Without a TURN server, media may not flow through strict NATs.');
+        }
       }
     }
   }
 
-  /**
-   * Завершение звонка
-   */
   hangup() {
-    if (this.pc) {
-      this.pc.close();
-      this.pc = null;
-    }
+    if (this.pc) { this.pc.close(); this.pc = null; }
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => track.stop());
       this.localStream = null;
@@ -291,10 +256,7 @@ export class CallModule {
     
     this.stopTimer();
     this.updateStatus('Call ended');
-    
-    // Сброс UI
-    const overlay = document.getElementById('call-overlay');
-    if (overlay) overlay.classList.add('hidden');
+    document.getElementById('call-overlay')?.classList.add('hidden');
   }
 
   toggleMute() {
@@ -303,7 +265,6 @@ export class CallModule {
     if (audioTrack) {
       this.isMuted = !audioTrack.enabled;
       audioTrack.enabled = !this.isMuted;
-      
       const btn = document.getElementById('btn-mute');
       if (btn) btn.textContent = this.isMuted ? '🎤' : '🔇';
     }
@@ -315,7 +276,6 @@ export class CallModule {
     if (videoTrack) {
       this.isVideoOff = !videoTrack.enabled;
       videoTrack.enabled = !this.isVideoOff;
-      
       const btn = document.getElementById('btn-video');
       if (btn) btn.textContent = this.isVideoOff ? '📹' : '🚫📹';
     }
@@ -331,7 +291,6 @@ export class CallModule {
     let seconds = 0;
     const el = document.getElementById('call-timer');
     if (!el) return;
-
     this.callTimerInterval = setInterval(() => {
       seconds++;
       const m = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -341,15 +300,6 @@ export class CallModule {
   }
 
   stopTimer() {
-    if (this.callTimerInterval) {
-      clearInterval(this.callTimerInterval);
-      this.callTimerInterval = null;
-    }
-  }
-  
-  // Метод для обработки входящего вызова (если нужно расширение)
-  async acceptCall() {
-      // Логика аналогична созданию ответа в handleSignal, но вызывается явно из UI
-      // Для текущего MVP достаточно автоматической обработки в handleSignal при получении offer
+    if (this.callTimerInterval) clearInterval(this.callTimerInterval);
   }
 }
